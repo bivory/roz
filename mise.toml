@@ -14,6 +14,7 @@ rust = "1.92.0"
 "cargo:cargo-llvm-cov" = "0.6.23"
 "cargo:cargo-audit" = "0.22.0"
 "cargo:cargo-deny" = "0.19.0"
+"cargo:cargo-release" = "0.25.21"
 
 # CLI tools
 "npm:markdownlint-cli2" = "0.20.0"
@@ -153,3 +154,23 @@ run = "docker run -it --rm -u vscode -v $(pwd):/workspaces/roz -w /workspaces/ro
 [tasks."dc:claude"]
 description = "Run Claude Code in devcontainer (unrestricted)"
 run = "docker run -it --rm -u vscode -v $(pwd):/workspaces/roz -w /workspaces/roz roz-devcontainer:local claude --dangerously-skip-permissions"
+
+# =============================================================================
+# Release Tasks
+# =============================================================================
+
+[tasks."release:patch"]
+description = "Release a patch version (0.1.0 -> 0.1.1)"
+run = "cargo release patch --execute"
+
+[tasks."release:minor"]
+description = "Release a minor version (0.1.0 -> 0.2.0)"
+run = "cargo release minor --execute"
+
+[tasks."release:major"]
+description = "Release a major version (0.1.0 -> 1.0.0)"
+run = "cargo release major --execute"
+
+[tasks."release:dry-run"]
+description = "Dry run a patch release (see what would happen)"
+run = "cargo release patch"

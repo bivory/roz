@@ -16,5 +16,6 @@
       "description": "Quality gate for Claude Code - enforces independent review before task completion",
       "version": "0.1.0"
     }
-  ]
+  ],
+  "version": "0.1.1"
 }
