@@ -49,6 +49,8 @@ tempfile = "3"
 proptest = "1"
 
 [package.metadata.release]
+# Don't publish to crates.io - this is a CLI tool distributed via GitHub releases
+publish = false
 # Run before version bump to sync plugin.json
 pre-release-hook = ["./scripts/sync-plugin-version.sh", "{{version}}"]
 # Commit message format

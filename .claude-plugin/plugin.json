@@ -1,6 +1,6 @@
 {
   "name": "roz",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Quality gate for Claude Code - enforces independent review before task completion",
   "author": "Bryan Ivory",
   "homepage": "https://github.com/bivory/roz",
