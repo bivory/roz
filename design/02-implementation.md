@@ -410,7 +410,72 @@ impl MessageStore for FileBackend {
 
 ## 4. Hook Handlers
 
-### 4.1 Pure Hook Functions
+### 4.1 Session-Start Hook
+
+The session-start hook initializes session state and detects available second opinion sources.
+
+```rust
+pub fn handle_session_start(
+    input: &HookInput,
+    store: &dyn MessageStore,
+) -> HookOutput {
+    let session_id = &input.session_id;
+
+    // Create or retrieve session
+    let state = match store.get_session(session_id) {
+        Ok(Some(s)) => s,  // Resume existing session
+        Ok(None) => {
+            // New session
+            let mut state = SessionState::new(session_id);
+            state.trace.push(TraceEvent {
+                id: generate_id(),
+                timestamp: Utc::now(),
+                event_type: EventType::SessionStart,
+                payload: json!({
+                    "source": input.source,
+                    "cwd": input.cwd,
+                }),
+            });
+            state
+        }
+        Err(e) => {
+            eprintln!("roz: warning: storage error: {}", e);
+            return HookOutput::approve();  // Fail open
+        }
+    };
+
+    // Save state
+    if let Err(e) = store.put_session(&state) {
+        eprintln!("roz: warning: failed to save state: {}", e);
+    }
+
+    // Optionally inject context about available second opinion sources
+    let context = detect_second_opinion_context();
+
+    HookOutput {
+        decision: HookDecision::Approve,
+        reason: None,
+        context,
+    }
+}
+
+fn detect_second_opinion_context() -> Option<String> {
+    let codex = command_exists("codex");
+    let gemini = command_exists("gemini");
+
+    if codex || gemini {
+        Some(format!(
+            "roz second opinion sources: {}{}",
+            if codex { "codex " } else { "" },
+            if gemini { "gemini" } else { "" }
+        ))
+    } else {
+        None  // Fall back to Claude Opus (always available)
+    }
+}
+```
+
+### 4.2 User-Prompt Hook
 
 ```rust
 impl SessionState {
@@ -455,7 +520,7 @@ impl SessionState {
 }
 ```
 
-### 4.2 Subagent-Stop Hook (Timestamp Validation)
+### 4.3 Subagent-Stop Hook (Timestamp Validation)
 
 The subagent-stop hook validates that:
 1. Roz posted a decision
@@ -526,7 +591,7 @@ pub fn handle_subagent_stop(input: &HookInput, store: &dyn MessageStore) -> Hook
 }
 ```
 
-### 4.3 Stop Hook (Block for Review)
+### 4.4 Stop Hook (Block for Review)
 
 ```rust
 fn block_for_review(
@@ -555,7 +620,7 @@ fn block_for_review(
 }
 ```
 
-### 4.4 PreToolUse Hook (Gate)
+### 4.5 PreToolUse Hook (Gate)
 
 The pre-tool-use hook enables automatic review before configured tools execute.
 

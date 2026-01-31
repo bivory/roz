@@ -19,7 +19,7 @@ flowchart TB
 
 | Layer | Responsibilities |
 |-------|------------------|
-| **Hook Runner** | session-start, user-prompt, pre-tool-use, stop, post-tool, subagent-stop dispatch |
+| **Hook Runner** | session-start, user-prompt, pre-tool-use, stop, subagent-stop dispatch |
 | **Core Logic** | State machine, decision evaluation, circuit breaker |
 | **File Backend** | `~/.roz/sessions/*.json` persistence |
 
@@ -80,11 +80,35 @@ classDiagram
         +Decision decision
         +Vec~DecisionRecord~ decision_history
         +Vec~String~ user_prompts
+        +Option~GateTrigger~ gate_trigger
+        +Option~DateTime~ gate_approved_at
+        +Option~DateTime~ last_prompt_at
+        +Option~DateTime~ review_started_at
         +Vec~ReviewAttempt~ attempts
     }
 
+    class GateTrigger {
+        +String tool_name
+        +TruncatedInput tool_input
+        +DateTime triggered_at
+        +String pattern_matched
+    }
+
+    class TruncatedInput {
+        +Value value
+        +bool truncated
+        +Option~String~ original_hash
+        +Option~usize~ original_size
+    }
+
     SessionState *-- ReviewState : contains
+    ReviewState *-- GateTrigger : optional
+    GateTrigger *-- TruncatedInput : contains
 ```
+
+**GateTrigger**: Captures context when a gate blocks a tool, so roz can review what was attempted.
+
+**TruncatedInput**: Tool inputs are truncated to 10KB to prevent bloated session state. Large inputs are hashed (SHA-256) for verification, with the original size recorded.
 
 ### 3.2 Decision States
 
@@ -102,7 +126,6 @@ classDiagram
 - `prompt`: User prompt (for user-prompt hook)
 - `source`: Session source - startup, resume, clear, or compact (for session-start hook)
 - `tool_name`, `tool_input`: Tool details (for pre-tool-use hook)
-- `tool_name`, `tool_input`, `tool_response`: Tool details (for post-tool hook)
 - `subagent_type`, `subagent_prompt`, `subagent_started_at`: Subagent details (for subagent-stop hook)
 
 **Output for PreToolUse** (to Claude Code):
@@ -196,6 +219,19 @@ stateDiagram-v2
 **Prompt isolation**: If user sends a prompt *during* an active review (after gate blocks but before roz approves), that prompt is ignored for scope purposes. This prevents "hurry up" messages from invalidating the pending approval.
 
 **Approval TTL**: Optional `approval_ttl_seconds` config causes approvals to expire regardless of scope. Useful for session resumes where stale approvals might persist.
+
+**Bash Command Normalization**: When matching Bash tool calls against gate patterns, commands are normalized to handle common shell patterns:
+
+| Input | Normalized | Why |
+|-------|------------|-----|
+| `GH_TOKEN=x gh issue close 123` | `gh issue close 123` | Strip env var prefixes |
+| `env VAR=x gh issue close` | `gh issue close` | Strip `env` command |
+| `echo "y" \| gh issue close 123` | `gh issue close 123` | Match rightmost command in pipeline |
+| `bash -c "gh issue close 123"` | `gh issue close 123` | Extract nested shell command |
+
+This ensures patterns like `Bash:gh issue close*` match regardless of how the command is invoked.
+
+**Timestamp Validation Buffer**: The subagent-stop hook allows a 5-second buffer after roz execution ends to account for clock skew when validating decision timestamps.
 
 ---
 
