@@ -19,7 +19,7 @@ flowchart TB
 
 | Layer | Responsibilities |
 |-------|------------------|
-| **Hook Runner** | session-start, user-prompt, stop, post-tool dispatch |
+| **Hook Runner** | session-start, user-prompt, pre-tool-use, stop, post-tool, subagent-stop dispatch |
 | **Core Logic** | State machine, decision evaluation, circuit breaker |
 | **File Backend** | `~/.roz/sessions/*.json` persistence |
 
@@ -101,8 +101,14 @@ classDiagram
 - `cwd`: Working directory
 - `prompt`: User prompt (for user-prompt hook)
 - `source`: Session source - startup, resume, clear, or compact (for session-start hook)
+- `tool_name`, `tool_input`: Tool details (for pre-tool-use hook)
 - `tool_name`, `tool_input`, `tool_response`: Tool details (for post-tool hook)
 - `subagent_type`, `subagent_prompt`, `subagent_started_at`: Subagent details (for subagent-stop hook)
+
+**Output for PreToolUse** (to Claude Code):
+- `permissionDecision`: "allow", "deny", or "ask"
+- `reason`: Message explaining denial (shown to agent)
+- `updatedInput`: Optional modified tool input
 
 **Output** (to Claude Code):
 - `decision`: "approve" or "block"
@@ -115,9 +121,12 @@ classDiagram
 |------------|---------|
 | `SessionStart` | Session begins |
 | `PromptReceived` | User submits prompt with `#roz` |
+| `GateBlocked` | Pre-tool-use hook blocks a gated tool |
+| `GateAllowed` | Pre-tool-use hook allows a gated tool (includes reason) |
 | `ToolCompleted` | Tool finishes execution |
 | `StopHookCalled` | Agent attempts to exit |
 | `RozDecision` | Roz posts COMPLETE or ISSUES |
+| `TraceCompacted` | Trace was truncated due to max_events limit |
 | `SessionEnd` | Session terminates |
 
 ---
@@ -129,6 +138,7 @@ stateDiagram-v2
     [*] --> Idle
 
     Idle --> Pending : #roz detected
+    Idle --> Pending : gate tool blocked
 
     Pending --> Blocked : stop hook
     Pending --> Idle : circuit breaker
@@ -138,6 +148,7 @@ stateDiagram-v2
     Blocked --> Idle : circuit breaker
 
     Approved --> Pending : new #roz prompt
+    Approved --> Idle : gate tool allowed
     Approved --> [*] : exit
 
     Idle : no review
@@ -151,13 +162,40 @@ stateDiagram-v2
 | From | Event | To | Action |
 |------|-------|----|--------|
 | Idle | `#roz` in prompt | Pending | Enable review, store prompt |
+| Idle | Gate tool blocked | Pending | Enable review, store gate trigger |
 | Pending | Stop hook | Blocked | Block with template, increment block_count |
 | Pending | Circuit breaker trips | Idle | Force approve, log warning |
 | Blocked | Roz: COMPLETE | Approved | Disable review, allow exit |
 | Blocked | Roz: ISSUES | Pending | Keep review enabled, provide feedback |
 | Blocked | Circuit breaker trips | Idle | Force approve, log warning |
 | Approved | New `#roz` prompt | Pending | Re-enable review |
+| Approved | Gate tool retry | Idle | Allow tool, reset state |
 | Approved | Exit | [*] | Session ends |
+
+**Review Triggers:**
+
+| Trigger | Hook | Description |
+|---------|------|-------------|
+| `#roz` prefix | user-prompt | Explicit opt-in by user |
+| Gate tool match | pre-tool-use | Automatic when tool matches configured pattern |
+
+**Approval Scope** (for gates):
+
+| Scope | Behavior | Use Case |
+|-------|----------|----------|
+| `session` | Once approved, all gated tools allowed until session ends | High-trust environments |
+| `prompt` | Approval resets when user sends new prompt | **Recommended** - review per task |
+| `tool` | Every gated tool call requires fresh review | High-security environments |
+
+**Scope implementation details:**
+
+- `gate_approved_at`: Set when roz posts COMPLETE
+- `last_prompt_at`: Set on every user prompt
+- `review_started_at`: Set when gate blocks (marks review cycle start)
+
+**Prompt isolation**: If user sends a prompt *during* an active review (after gate blocks but before roz approves), that prompt is ignored for scope purposes. This prevents "hurry up" messages from invalidating the pending approval.
+
+**Approval TTL**: Optional `approval_ttl_seconds` config causes approvals to expire regardless of scope. Useful for session resumes where stale approvals might persist.
 
 ---
 
@@ -249,6 +287,83 @@ sequenceDiagram
 
     Note over Agent: exits with warning
 ```
+
+### 5.4 Gate: Issue Close Blocked
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant PreTool as pre-tool-use hook
+    participant State as Session State
+    participant Tool as tissue/beads
+
+    Agent->>PreTool: tissue close_issue
+    PreTool->>State: check config.review.gates
+    Note over PreTool: tool matches pattern<br/>no prior approval
+
+    PreTool->>State: enable review<br/>store gate_trigger
+    PreTool-->>Agent: deny + "Review required"
+
+    Note over Agent: spawns roz:roz...
+    Note over Agent: roz posts COMPLETE
+
+    Agent->>PreTool: tissue close_issue (retry)
+    PreTool->>State: check decision
+    Note over PreTool: decision = Complete<br/>skip_if_approved = true
+    PreTool-->>Agent: allow
+
+    Agent->>Tool: close_issue
+    Tool-->>Agent: success
+```
+
+### 5.5 Gate: Multiple Tools in Session
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant PreTool as pre-tool-use hook
+    participant State as Session State
+
+    Note over State: decision = Complete<br/>(from earlier review)
+
+    Agent->>PreTool: tissue close_issue #1
+    PreTool->>State: check decision
+    Note over PreTool: skip_if_approved = true
+    PreTool-->>Agent: allow
+
+    Agent->>PreTool: tissue close_issue #2
+    PreTool->>State: check decision
+    Note over PreTool: still approved
+    PreTool-->>Agent: allow
+
+    Note over Agent: User sends new #roz prompt
+    Note over State: decision = Pending
+
+    Agent->>PreTool: tissue close_issue #3
+    PreTool->>State: check decision
+    Note over PreTool: decision = Pending
+    PreTool-->>Agent: deny + "Review required"
+```
+
+### 5.6 Gate: Configurable Per-Tool
+
+```mermaid
+flowchart TD
+    A[PreToolUse Hook] --> B{tools non-empty?}
+    B -->|No| C[Allow]
+    B -->|Yes| D{Tool matches pattern?}
+    D -->|No| C
+    D -->|Yes| E{Circuit breaker tripped?}
+    E -->|Yes| C
+    E -->|No| F{is_gate_approved?}
+    F -->|Yes| C
+    F -->|No| G[Deny + Enable Review]
+```
+
+`is_gate_approved()` checks:
+1. Decision is Complete
+2. Approval not expired (if TTL set)
+3. Approval scope rules (session/prompt/tool)
 
 ---
 
