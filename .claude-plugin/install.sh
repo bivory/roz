@@ -13,6 +13,7 @@ REPO="bivory/roz"
 INSTALL_DIR="${ROZ_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="roz"
 DRY_RUN="${DRY_RUN:-false}"
+TMP_DIR=""  # Global for cleanup trap
 
 # Colors for output
 RED='\033[0;31m'
@@ -120,7 +121,6 @@ main() {
     local target
     local binary_url
     local checksum_url
-    local tmp_dir
 
     info "Detecting platform..."
     target="$(get_target)"
@@ -142,18 +142,18 @@ main() {
     checksum_url="https://github.com/$REPO/releases/download/$version/roz-$target.sha256"
 
     # Create temp directory
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    TMP_DIR="$(mktemp -d)"
+    trap 'rm -rf "$TMP_DIR"' EXIT TERM INT
 
     # Download binary
     info "Downloading roz..."
-    download "$binary_url" "$tmp_dir/$BINARY_NAME"
+    download "$binary_url" "$TMP_DIR/$BINARY_NAME"
 
     # Download and verify checksum
     info "Verifying checksum..."
-    if download "$checksum_url" "$tmp_dir/$BINARY_NAME.sha256" 2>/dev/null; then
-        expected_checksum="$(cat "$tmp_dir/$BINARY_NAME.sha256" | cut -d' ' -f1)"
-        verify_checksum "$tmp_dir/$BINARY_NAME" "$expected_checksum"
+    if download "$checksum_url" "$TMP_DIR/$BINARY_NAME.sha256" 2>/dev/null; then
+        expected_checksum="$(cat "$TMP_DIR/$BINARY_NAME.sha256" | cut -d' ' -f1)"
+        verify_checksum "$TMP_DIR/$BINARY_NAME" "$expected_checksum"
     else
         warn "Checksum file not found, skipping verification"
     fi
@@ -171,7 +171,7 @@ main() {
 
     # Install binary
     info "Installing to $INSTALL_DIR/$BINARY_NAME..."
-    mv "$tmp_dir/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
     # Verify installation
@@ -296,12 +296,12 @@ run_self_tests() {
 
     # Test 7: can create temp directory
     echo -n "Test: can create temp directory... "
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    if [ -d "$tmp_dir" ]; then
+    local test_tmp_dir
+    test_tmp_dir="$(mktemp -d)"
+    if [ -d "$test_tmp_dir" ]; then
         echo "PASS"
         passed=$((passed + 1))
-        rm -rf "$tmp_dir"
+        rm -rf "$test_tmp_dir"
     else
         echo "FAIL"
         failed=$((failed + 1))
