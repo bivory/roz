@@ -35,7 +35,7 @@ chrono = { version = "0.4", features = ["serde"] }
 glob = "0.3"
 
 # Directory paths
-dirs = "5"
+dirs = "6"
 
 # Regex for session ID extraction
 regex = "1"
