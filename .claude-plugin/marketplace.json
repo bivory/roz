@@ -1,0 +1,20 @@
+{
+  "name": "bivory",
+  "owner": {
+    "name": "Bryan Ivory"
+  },
+  "metadata": {
+    "description": "Marketplace for roz"
+  },
+  "plugins": [
+    {
+      "name": "roz",
+      "source": {
+        "source": "github",
+        "repo": "bivory/roz"
+      },
+      "description": "Quality gate for Claude Code - enforces independent review before task completion",
+      "version": "0.1.0"
+    }
+  ]
+}

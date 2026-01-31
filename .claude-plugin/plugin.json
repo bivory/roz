@@ -1,0 +1,20 @@
+{
+  "name": "roz",
+  "version": "0.1.0",
+  "description": "Quality gate for Claude Code - enforces independent review before task completion",
+  "author": "Bryan Ivory",
+  "homepage": "https://github.com/bivory/roz",
+  "repository": "https://github.com/bivory/roz",
+  "license": "AGPL-3.0-or-later",
+  "keywords": ["quality-gate", "code-review", "safety"],
+  "engines": {
+    "claude-code": ">=1.0.0"
+  },
+  "main": {
+    "agents": "agents/",
+    "hooks": "hooks/hooks.json"
+  },
+  "scripts": {
+    "postinstall": ".claude-plugin/install.sh"
+  }
+}

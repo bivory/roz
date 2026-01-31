@@ -1,0 +1,66 @@
+[package]
+name = "roz"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Quality gate for Claude Code - enforces independent review before task completion"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/bryanivory/roz"
+
+[[bin]]
+name = "roz"
+path = "src/main.rs"
+
+[lib]
+name = "roz"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+thiserror = "2.0"
+
+# Types
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Pattern matching (for gate tool patterns)
+glob = "0.3"
+
+# Directory paths
+dirs = "5"
+
+# Regex for session ID extraction
+regex = "1"
+
+# Hashing (for TruncatedInput)
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"
+
+[package.metadata.release]
+# Run before version bump to sync plugin.json
+pre-release-hook = ["./scripts/sync-plugin-version.sh", "{{version}}"]
+# Commit message format
+pre-release-commit-message = "chore: release v{{version}}"
+# Tag format
+tag-name = "v{{version}}"
+# Push to remote
+push = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

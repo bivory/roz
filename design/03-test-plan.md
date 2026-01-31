@@ -1,23 +1,24 @@
 # roz - Test Plan
 
----
-
 ## 14. Testing Strategy
 
 ### 14.1 Phase 1: With Implementation
 
 **Unit tests** for core logic:
+
 - Hook I/O parsing (malformed JSON, missing fields)
 - State machine transitions
 - Circuit breaker edge cases
 - `#roz` command parsing
 
 **Integration tests** for file backend:
+
 - Atomic write / read cycle
 - Corruption recovery (temp file cleanup)
 - Session listing and cleanup
 
 **In-memory backend** for unit tests:
+
 ```rust
 struct MemoryBackend {
     sessions: RefCell<HashMap<String, SessionState>>,
@@ -27,10 +28,12 @@ struct MemoryBackend {
 ### 14.2 Phase 2: After MVP
 
 **Property-based tests** using `proptest`:
+
 - State machine: random event sequences never panic, always valid state
 - Serialization: round-trip through JSON
 
 **Hook simulation harness**:
+
 ```bash
 # Simulate Claude Code invoking hooks
 echo '{"session_id":"test","prompt":"#roz fix"}' | roz hook user-prompt
@@ -42,8 +45,6 @@ echo '{"session_id":"test"}' | roz hook stop
 - Mocking Claude Code itself
 - Testing external model calls (codex/gemini)
 
----
-
 ## Test Categories
 
 ### Unit Tests
@@ -51,7 +52,7 @@ echo '{"session_id":"test"}' | roz hook stop
 | Category | Tests | Priority |
 |----------|-------|----------|
 | Hook I/O parsing | Valid JSON, malformed JSON, missing required fields, extra fields | High |
-| State transitions | Idle→Pending, Pending→Blocked, Blocked→Approved, circuit breaker | High |
+| State transitions | Idle->Pending, Pending->Blocked, Blocked->Approved, circuit breaker | High |
 | `#roz` command parsing | `#roz`, `#roz:stop`, `#roz message`, edge cases | High |
 | Decision serialization | Round-trip Complete, Issues, Pending through JSON | Medium |
 | Template loading | File exists, file missing (fallback), invalid template | Medium |
@@ -68,7 +69,7 @@ echo '{"session_id":"test"}' | roz hook stop
 | File backend | Write/read cycle, atomic rename, temp file cleanup | High |
 | Session listing | Empty dir, single session, multiple sessions, sort order | Medium |
 | Session cleanup | Age filter, skip active sessions, remove completed | Medium |
-| CLI commands | `roz decide`, `roz context`, `roz debug` | Medium |
+| CLI commands | `roz decide`, `roz context`, `roz debug`, `roz list` | Medium |
 
 ### Property-Based Tests (Phase 2)
 
@@ -137,7 +138,10 @@ mod gate_tests {
     #[test]
     fn approval_scope_session_always_valid() {
         let mut state = SessionState::new("test");
-        state.review.decision = Decision::Complete { summary: "ok".into(), second_opinions: None };
+        state.review.decision = Decision::Complete {
+            summary: "ok".into(),
+            second_opinions: None,
+        };
         state.review.gate_approved_at = Some(Utc::now() - Duration::hours(1));
 
         let gates = GatesConfig {
@@ -152,8 +156,12 @@ mod gate_tests {
     #[test]
     fn approval_scope_prompt_invalidated_by_new_prompt() {
         let mut state = SessionState::new("test");
-        state.review.decision = Decision::Complete { summary: "ok".into(), second_opinions: None };
-        state.review.gate_approved_at = Some(Utc::now() - Duration::minutes(5));
+        state.review.decision = Decision::Complete {
+            summary: "ok".into(),
+            second_opinions: None,
+        };
+        state.review.gate_approved_at =
+            Some(Utc::now() - Duration::minutes(5));
         state.review.last_prompt_at = Some(Utc::now());  // After approval
 
         let gates = GatesConfig {
@@ -168,13 +176,16 @@ mod gate_tests {
     #[test]
     fn approval_ttl_expires() {
         let mut state = SessionState::new("test");
-        state.review.decision = Decision::Complete { summary: "ok".into(), second_opinions: None };
+        state.review.decision = Decision::Complete {
+            summary: "ok".into(),
+            second_opinions: None,
+        };
         state.review.gate_approved_at = Some(Utc::now() - Duration::hours(2));
 
         let gates = GatesConfig {
             tools: vec!["test".into()],
             approval_scope: ApprovalScope::Session,
-            approval_ttl_seconds: Some(3600),  // 1 hour TTL, approval is 2 hours old
+            approval_ttl_seconds: Some(3600),  // 1 hour TTL, approval is 2h old
         };
 
         assert!(!is_gate_approved(&state, &gates));
@@ -255,7 +266,9 @@ echo "{\"session_id\":\"$SESSION_ID\",\"source\":\"startup\"}" \
   | roz hook session-start
 
 # Test pre-tool-use blocks gated tool
-echo "{\"session_id\":\"$SESSION_ID\",\"tool_name\":\"mcp__tissue__close_issue\",\"tool_input\":{\"id\":123}}" \
+TOOL_INPUT='{"session_id":"'"$SESSION_ID"'",'
+TOOL_INPUT+='"tool_name":"mcp__tissue__close_issue","tool_input":{"id":123}}'
+echo "$TOOL_INPUT" \
   | roz hook pre-tool-use \
   | jq -e '.hookSpecificOutput.permissionDecision == "deny"'
 
@@ -263,7 +276,7 @@ echo "{\"session_id\":\"$SESSION_ID\",\"tool_name\":\"mcp__tissue__close_issue\"
 roz decide $SESSION_ID COMPLETE "Reviewed"
 
 # Test pre-tool-use now allows
-echo "{\"session_id\":\"$SESSION_ID\",\"tool_name\":\"mcp__tissue__close_issue\",\"tool_input\":{\"id\":123}}" \
+echo "$TOOL_INPUT" \
   | roz hook pre-tool-use \
   | jq -e '.hookSpecificOutput.permissionDecision == "allow"'
 
@@ -272,15 +285,15 @@ echo "{\"session_id\":\"$SESSION_ID\",\"prompt\":\"close another issue\"}" \
   | roz hook user-prompt
 
 # Test pre-tool-use blocks again
-echo "{\"session_id\":\"$SESSION_ID\",\"tool_name\":\"mcp__tissue__close_issue\",\"tool_input\":{\"id\":456}}" \
+TOOL_INPUT2='{"session_id":"'"$SESSION_ID"'",'
+TOOL_INPUT2+='"tool_name":"mcp__tissue__close_issue","tool_input":{"id":456}}'
+echo "$TOOL_INPUT2" \
   | roz hook pre-tool-use \
   | jq -e '.hookSpecificOutput.permissionDecision == "deny"'
 
 # Cleanup
 rm -rf $ROZ_HOME
 ```
-
----
 
 ## Test Matrix
 
@@ -302,5 +315,3 @@ rm -rf $ROZ_HOME
 | Beta | Optional |
 | Nightly | Not tested |
 | MSRV | 1.70.0 (tentative) |
-
----

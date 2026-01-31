@@ -26,3 +26,8 @@ coverage/
 # Local development
 .mise.local.toml
 TODO.md
+
+# Agents and tools
+CLAUDE.md
+.claude/
+.tissue/

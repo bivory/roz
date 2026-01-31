@@ -1,0 +1,82 @@
+# Devcontainer image for roz
+# Build: docker build -t roz-devcontainer .devcontainer/
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        git \
+        jq \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create workspace directory
+RUN mkdir -p /workspaces/roz && chown vscode:vscode /workspaces/roz
+
+# Switch to vscode user for tool installation
+USER vscode
+WORKDIR /home/vscode
+
+# Set up cargo environment
+ENV CARGO_HOME="/home/vscode/.cargo"
+ENV RUSTUP_HOME="/home/vscode/.rustup"
+
+ENV PATH="/home/vscode/.local/bin:/usr/local/bin:${PATH}"
+
+# Install mise
+RUN curl https://mise.run | sh \
+    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc \
+    && echo 'eval "$(mise activate bash)"' >> ~/.bashrc
+
+# Copy mise.toml for tool installation
+RUN mkdir -p ~/.config/mise
+COPY --chown=vscode:vscode mise.toml /home/vscode/.config/mise/config.toml
+COPY --chown=vscode:vscode mise.toml /workspaces/roz/mise.toml
+
+# Install all tools via mise
+RUN mise trust ~/.config/mise/config.toml \
+    && cd /workspaces/roz \
+    && mise trust \
+    && mise install --verbose
+
+# Set up PATH for all tools
+ENV PATH="/home/vscode/.local/share/mise/shims:/home/vscode/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
+
+# Install rust-analyzer for LSP support
+RUN rustup component add rust-analyzer
+
+# Verify tools are installed
+RUN cargo --version \
+    && rustc --version \
+    && rust-analyzer --version \
+    && cargo-nextest --version \
+    && typos --version \
+    && cargo-machete --version \
+    && cargo-audit --version \
+    && cargo-deny --version
+
+# Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && claude install stable
+
+# Verify Claude Code
+RUN claude --version
+
+# Install tissue for issue tracking
+RUN mkdir -p ~/.local/bin \
+    && OS=$(uname -s | tr '[:upper:]' '[:lower:]') \
+    && ARCH=$(uname -m) \
+    && case "$OS" in darwin) OS="macos" ;; linux) OS="linux" ;; esac \
+    && case "$ARCH" in x86_64|amd64) ARCH="x86_64" ;; aarch64|arm64) ARCH="aarch64" ;; esac \
+    && VERSION="v26.1.2" \
+    && curl -fsSL "https://github.com/evil-mind-evil-sword/tissue/releases/download/${VERSION}/tissue-${ARCH}-${OS}.tar.gz" -o /tmp/tissue.tar.gz \
+    && tar -xzf /tmp/tissue.tar.gz -C /tmp \
+    && mv /tmp/tissue-${ARCH}-${OS} ~/.local/bin/tissue \
+    && chmod +x ~/.local/bin/tissue \
+    && rm /tmp/tissue.tar.gz
+RUN tissue version
+
+USER root

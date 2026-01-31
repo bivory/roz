@@ -1,8 +1,7 @@
 # roz - Architecture
 
-This document describes the system architecture, domain model, and component relationships.
-
----
+This document describes the system architecture, domain model, and component
+relationships.
 
 ## 1. System Overview
 
@@ -24,11 +23,11 @@ flowchart TB
 | **File Backend** | `~/.roz/sessions/*.json` persistence |
 
 **Layer Functions:**
-- **Hook Runner**: Receives JSON from Claude Code, dispatches to appropriate handler
+
+- **Hook Runner**: Receives JSON from Claude Code, dispatches to appropriate
+  handler
 - **Core Logic**: Pure functions implementing the review state machine
 - **File Backend**: Persistence layer for session state
-
----
 
 ## 2. Module Structure
 
@@ -56,8 +55,6 @@ flowchart TB
 | `hooks/hooks.json` | Hook configuration |
 | `templates/block-*.md` | Block message templates |
 | `bin/roz` | Compiled binary |
-
----
 
 ## 3. Domain Model
 
@@ -106,9 +103,12 @@ classDiagram
     GateTrigger *-- TruncatedInput : contains
 ```
 
-**GateTrigger**: Captures context when a gate blocks a tool, so roz can review what was attempted.
+**GateTrigger**: Captures context when a gate blocks a tool, so roz can review
+what was attempted.
 
-**TruncatedInput**: Tool inputs are truncated to 10KB to prevent bloated session state. Large inputs are hashed (SHA-256) for verification, with the original size recorded.
+**TruncatedInput**: Tool inputs are truncated to 10KB to prevent bloated
+session state. Large inputs are hashed (SHA-256) for verification, with the
+original size recorded.
 
 ### 3.2 Decision States
 
@@ -121,19 +121,24 @@ classDiagram
 ### 3.3 Hook I/O
 
 **Input** (from Claude Code):
+
 - `session_id`: Unique session identifier
 - `cwd`: Working directory
 - `prompt`: User prompt (for user-prompt hook)
-- `source`: Session source - startup, resume, clear, or compact (for session-start hook)
+- `source`: Session source - startup, resume, clear, or compact (for
+  session-start hook)
 - `tool_name`, `tool_input`: Tool details (for pre-tool-use hook)
-- `subagent_type`, `subagent_prompt`, `subagent_started_at`: Subagent details (for subagent-stop hook)
+- `subagent_type`, `subagent_prompt`, `subagent_started_at`: Subagent details
+  (for subagent-stop hook)
 
 **Output for PreToolUse** (to Claude Code):
+
 - `permissionDecision`: "allow", "deny", or "ask"
 - `reason`: Message explaining denial (shown to agent)
 - `updatedInput`: Optional modified tool input
 
 **Output** (to Claude Code):
+
 - `decision`: "approve" or "block"
 - `reason`: Message explaining block (shown to agent)
 - `context`: Additional context injected into conversation
@@ -151,8 +156,6 @@ classDiagram
 | `RozDecision` | Roz posts COMPLETE or ISSUES |
 | `TraceCompacted` | Trace was truncated due to max_events limit |
 | `SessionEnd` | Session terminates |
-
----
 
 ## 4. State Machine
 
@@ -216,11 +219,17 @@ stateDiagram-v2
 - `last_prompt_at`: Set on every user prompt
 - `review_started_at`: Set when gate blocks (marks review cycle start)
 
-**Prompt isolation**: If user sends a prompt *during* an active review (after gate blocks but before roz approves), that prompt is ignored for scope purposes. This prevents "hurry up" messages from invalidating the pending approval.
+**Prompt isolation**: If user sends a prompt *during* an active review (after
+gate blocks but before roz approves), that prompt is ignored for scope
+purposes. This prevents "hurry up" messages from invalidating the pending
+approval.
 
-**Approval TTL**: Optional `approval_ttl_seconds` config causes approvals to expire regardless of scope. Useful for session resumes where stale approvals might persist.
+**Approval TTL**: Optional `approval_ttl_seconds` config causes approvals to
+expire regardless of scope. Useful for session resumes where stale approvals
+might persist.
 
-**Bash Command Normalization**: When matching Bash tool calls against gate patterns, commands are normalized to handle common shell patterns:
+**Bash Command Normalization**: When matching Bash tool calls against gate
+patterns, commands are normalized to handle common shell patterns:
 
 | Input | Normalized | Why |
 |-------|------------|-----|
@@ -229,11 +238,12 @@ stateDiagram-v2
 | `echo "y" \| gh issue close 123` | `gh issue close 123` | Match rightmost command in pipeline |
 | `bash -c "gh issue close 123"` | `gh issue close 123` | Extract nested shell command |
 
-This ensures patterns like `Bash:gh issue close*` match regardless of how the command is invoked.
+This ensures patterns like `Bash:gh issue close*` match regardless of how the
+command is invoked.
 
-**Timestamp Validation Buffer**: The subagent-stop hook allows a 5-second buffer after roz execution ends to account for clock skew when validating decision timestamps.
-
----
+**Timestamp Validation Buffer**: The subagent-stop hook allows a 5-second
+buffer after roz execution ends to account for clock skew when validating
+decision timestamps.
 
 ## 5. Sequence Diagrams
 
@@ -397,17 +407,16 @@ flowchart TD
 ```
 
 `is_gate_approved()` checks:
+
 1. Decision is Complete
 2. Approval not expired (if TTL set)
 3. Approval scope rules (session/prompt/tool)
-
----
 
 ## 6. Storage Architecture
 
 ### 6.1 File Layout
 
-```
+```text
 ~/.roz/
 ├── sessions/
 │   ├── abc123-def456.json     # SessionState (one per session)
@@ -433,8 +442,6 @@ The `MessageStore` trait abstracts storage operations:
 | **FileBackend** | Production - JSON files in `~/.roz/sessions/` |
 | **MemoryBackend** | Testing - in-memory HashMap |
 
----
-
 ## 7. Circuit Breaker
 
 Prevents infinite blocking loops when something goes wrong.
@@ -445,12 +452,11 @@ Prevents infinite blocking loops when something goes wrong.
 | `cooldown_seconds` | 300 | Time before breaker resets |
 
 **Behavior:**
+
 1. Each block increments `block_count`
 2. When `block_count >= max_blocks`, breaker trips
 3. Tripped breaker forces approve and logs warning
 4. Breaker resets after cooldown or on new session
-
----
 
 ## 8. Template System
 
@@ -480,18 +486,19 @@ sequenceDiagram
 ### 8.2 Attempt Tracking
 
 Each block attempt records:
+
 - Template ID used
 - Timestamp
-- Outcome (Pending → Success/NotSpawned/NoDecision/BadSessionId)
+- Outcome (Pending -> Success/NotSpawned/NoDecision/BadSessionId)
 
 This enables `roz stats` to compare template effectiveness.
-
----
 
 ## Related Documents
 
 - [Overview](./00-overview.md) - Vision, core concepts, design principles
-- [Implementation](./02-implementation.md) - Rust types, storage, hooks, CLI commands
+- [Implementation](./02-implementation.md) - Rust types, storage, hooks, CLI
+  commands
 - [Test Plan](./03-test-plan.md) - Testing strategy
 - [CI](./04-ci.md) - Version management and release workflow
-- [Agent Instructions](./agents-roz.md) - Full roz agent behavioral specification
+- [Agent Instructions](./agents-roz.md) - Full roz agent behavioral
+  specification

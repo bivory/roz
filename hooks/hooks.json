@@ -1,0 +1,59 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "roz hook session-start",
+        "timeout": 5
+      }]
+    }],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__tissue__.*",
+        "hooks": [{
+          "type": "command",
+          "command": "roz hook pre-tool-use",
+          "timeout": 5
+        }]
+      },
+      {
+        "matcher": "mcp__beads__.*",
+        "hooks": [{
+          "type": "command",
+          "command": "roz hook pre-tool-use",
+          "timeout": 5
+        }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "roz hook pre-tool-use",
+          "timeout": 5
+        }]
+      }
+    ],
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "roz hook stop",
+        "timeout": 5
+      }]
+    }],
+    "SubagentStop": [{
+      "matcher": "roz:roz",
+      "hooks": [{
+        "type": "command",
+        "command": "roz hook subagent-stop",
+        "timeout": 5
+      }]
+    }],
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "roz hook user-prompt",
+        "timeout": 5
+      }]
+    }]
+  }
+}
