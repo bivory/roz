@@ -1,4 +1,5 @@
 {
+  "description": "roz quality gate hooks - enforces independent review before task completion",
   "hooks": {
     "SessionStart": [{
       "hooks": [{

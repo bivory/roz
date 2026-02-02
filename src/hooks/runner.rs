@@ -48,10 +48,10 @@ mod tests {
         input.prompt = Some("#roz test".to_string());
 
         let output = dispatch_hook("user-prompt", &input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]
@@ -60,10 +60,10 @@ mod tests {
         let input = make_input("test-123");
 
         let output = dispatch_hook("stop", &input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]
@@ -72,10 +72,10 @@ mod tests {
         let input = make_input("test-123");
 
         let output = dispatch_hook("subagent-stop", &input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]
@@ -85,10 +85,10 @@ mod tests {
         input.source = Some("startup".to_string());
 
         let output = dispatch_hook("session-start", &input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
 
         // Session should be created
         let state = store.get_session("test-123").unwrap().unwrap();
@@ -102,9 +102,9 @@ mod tests {
 
         let output = dispatch_hook("unknown", &input, &store);
         // Unknown hooks fail open
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 }

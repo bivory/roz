@@ -4,9 +4,31 @@ use clap::{Parser, Subcommand};
 use roz::cli;
 use std::process::ExitCode;
 
+/// Get the version string.
+///
+/// - Release builds (on a git tag): "0.1.2"
+/// - Development builds: "0.1.2-dev (abc1234)"
+/// - Dirty working directory: "0.1.2-dev (abc1234-dirty)"
+fn version() -> &'static str {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const GIT_HASH: &str = env!("ROZ_GIT_HASH");
+    const IS_RELEASE: &str = env!("ROZ_IS_RELEASE");
+
+    // Use a static to avoid repeated allocations
+    static VERSION_STRING: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    VERSION_STRING.get_or_init(|| {
+        if IS_RELEASE == "true" {
+            VERSION.to_string()
+        } else {
+            format!("{VERSION}-dev ({GIT_HASH})")
+        }
+    })
+}
+
 #[derive(Parser)]
 #[command(name = "roz")]
-#[command(author, version, about = "Quality gate for Claude Code", long_about = None)]
+#[command(author, version = version(), about = "Quality gate for Claude Code", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

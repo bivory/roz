@@ -19,9 +19,9 @@ if [ -f .claude-plugin/plugin.json ]; then
     echo "Updated .claude-plugin/plugin.json"
 fi
 
-# Update marketplace.json (if exists)
+# Update marketplace.json plugin entry version (if exists)
 if [ -f .claude-plugin/marketplace.json ]; then
-    jq ".version = \"$VERSION\"" .claude-plugin/marketplace.json > tmp.json
+    jq ".plugins[0].version = \"$VERSION\"" .claude-plugin/marketplace.json > tmp.json
     mv tmp.json .claude-plugin/marketplace.json
     echo "Updated .claude-plugin/marketplace.json"
 fi

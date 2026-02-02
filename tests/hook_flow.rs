@@ -31,7 +31,10 @@ fn full_flow_user_prompt_to_complete() {
     let mut input = make_input(session_id);
     input.prompt = Some("#roz fix the authentication bug".to_string());
     let output = handle_user_prompt(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 
     // Verify review is enabled
     let state = store.get_session(session_id).unwrap().unwrap();
@@ -41,7 +44,7 @@ fn full_flow_user_prompt_to_complete() {
     // Step 2: Stop hook blocks because review is pending
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Block));
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
     assert!(output.reason.is_some());
     assert!(output.reason.as_ref().unwrap().contains("roz:roz"));
 
@@ -62,7 +65,10 @@ fn full_flow_user_prompt_to_complete() {
     // Step 4: Stop hook now approves
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 }
 
 #[test]
@@ -78,7 +84,7 @@ fn full_flow_with_issues() {
     // Step 2: First stop blocks
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Block));
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
 
     // Step 3: Roz finds issues
     let mut state = store.get_session(session_id).unwrap().unwrap();
@@ -92,7 +98,7 @@ fn full_flow_with_issues() {
     // Step 4: Stop hook still blocks with issue message
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Block));
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
     assert!(
         output
             .reason
@@ -113,7 +119,10 @@ fn full_flow_with_issues() {
     // Step 6: Stop hook approves
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 }
 
 #[test]
@@ -145,7 +154,10 @@ fn subagent_stop_validates_timestamp() {
     input.subagent_started_at = Some(subagent_started);
 
     let output = handle_subagent_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 }
 
 #[test]
@@ -174,7 +186,7 @@ fn subagent_stop_rejects_pre_existing_decision() {
     input.subagent_started_at = Some(subagent_started);
 
     let output = handle_subagent_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Block));
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
     assert!(
         output
             .reason
@@ -224,7 +236,10 @@ fn subagent_stop_rejects_decision_after_end() {
     let output = handle_subagent_stop(&input, &store);
     // This should approve because decision_time <= subagent_ended + 5s buffer
     // (both are approximately Utc::now())
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 }
 
 #[test]
@@ -266,7 +281,10 @@ fn no_review_means_no_block() {
     // Stop should approve immediately
     let input = make_input(session_id);
     let output = handle_stop(&input, &store);
-    assert!(matches!(output.decision, HookDecision::Approve));
+    assert!(
+        output.decision.is_none(),
+        "expected approve (decision=None)"
+    );
 }
 
 // ============================================================================

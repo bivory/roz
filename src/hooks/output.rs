@@ -4,38 +4,40 @@ use serde::Serialize;
 use serde_json::Value;
 
 /// Output returned from hooks.
+///
+/// Per Claude Code docs: omit `decision` to allow, set to `"block"` to block.
 #[derive(Debug, Clone, Serialize)]
 pub struct HookOutput {
-    /// The decision (approve or block).
-    pub decision: HookDecision,
+    /// The decision - only set to "block" when blocking.
+    /// Omit (None) to allow the action to proceed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<HookDecision>,
 
-    /// Reason for the decision (only for block).
+    /// Reason for the decision (required when blocking).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 
     /// Additional context to inject into the conversation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
+    #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
+    pub additional_context: Option<String>,
 }
 
 /// Hook decision type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HookDecision {
-    /// Allow the action to proceed.
-    Approve,
     /// Block the action.
     Block,
 }
 
 impl HookOutput {
-    /// Create an approve decision.
+    /// Create an approve decision (empty output - omit decision to allow).
     #[must_use]
     pub fn approve() -> Self {
         Self {
-            decision: HookDecision::Approve,
+            decision: None,
             reason: None,
-            context: None,
+            additional_context: None,
         }
     }
 
@@ -43,9 +45,9 @@ impl HookOutput {
     #[must_use]
     pub fn block(reason: &str) -> Self {
         Self {
-            decision: HookDecision::Block,
+            decision: Some(HookDecision::Block),
             reason: Some(reason.to_string()),
-            context: None,
+            additional_context: None,
         }
     }
 }
@@ -139,7 +141,8 @@ mod tests {
     fn approve_serialization() {
         let output = HookOutput::approve();
         let json = serde_json::to_string(&output).unwrap();
-        assert_eq!(json, r#"{"decision":"approve"}"#);
+        // Empty object - decision omitted to allow
+        assert_eq!(json, "{}");
     }
 
     #[test]
@@ -152,10 +155,6 @@ mod tests {
     #[test]
     fn hook_decision_values() {
         assert_eq!(
-            serde_json::to_string(&HookDecision::Approve).unwrap(),
-            r#""approve""#
-        );
-        assert_eq!(
             serde_json::to_string(&HookDecision::Block).unwrap(),
             r#""block""#
         );
@@ -164,13 +163,15 @@ mod tests {
     #[test]
     fn approve_with_context() {
         let output = HookOutput {
-            decision: HookDecision::Approve,
+            decision: None,
             reason: None,
-            context: Some("roz second opinion sources: codex".to_string()),
+            additional_context: Some("roz second opinion sources: codex".to_string()),
         };
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("context"));
+        assert!(json.contains("additionalContext"));
         assert!(json.contains("codex"));
+        // decision should be omitted
+        assert!(!json.contains("decision"));
     }
 
     #[test]

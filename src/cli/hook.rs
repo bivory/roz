@@ -97,7 +97,10 @@ mod tests {
         input.prompt = Some("#roz test".to_string());
 
         let output = dispatch_hook("user-prompt", &input, &store);
-        assert!(matches!(output.decision, HookDecision::Approve));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
 
         // Verify session was created with review enabled
         let state = store.get_session("test-dispatch-1").unwrap().unwrap();
@@ -110,7 +113,10 @@ mod tests {
         let input = make_input("test-dispatch-2");
 
         let output = dispatch_hook("session-start", &input, &store);
-        assert!(matches!(output.decision, HookDecision::Approve));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
 
         // Verify session was created
         let state = store.get_session("test-dispatch-2").unwrap().unwrap();
@@ -126,7 +132,10 @@ mod tests {
         dispatch_hook("session-start", &input, &store);
 
         let output = dispatch_hook("stop", &input, &store);
-        assert!(matches!(output.decision, HookDecision::Approve));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]
@@ -141,7 +150,7 @@ mod tests {
         // Stop should block
         let input = make_input("test-dispatch-4");
         let output = dispatch_hook("stop", &input, &store);
-        assert!(matches!(output.decision, HookDecision::Block));
+        assert!(matches!(output.decision, Some(HookDecision::Block)));
     }
 
     #[test]
@@ -151,14 +160,18 @@ mod tests {
 
         // Unknown hook should approve (fail-open)
         let output = dispatch_hook("nonexistent-hook", &input, &store);
-        assert!(matches!(output.decision, HookDecision::Approve));
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]
     fn hook_output_approve_serialization() {
         let output = HookOutput::approve();
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"decision\":\"approve\""));
+        // Approve outputs empty object (decision omitted per Claude Code spec)
+        assert_eq!(json, "{}");
     }
 
     #[test]

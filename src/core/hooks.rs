@@ -56,12 +56,12 @@ pub fn handle_session_start(input: &HookInput, store: &dyn MessageStore) -> Hook
     }
 
     // Optionally inject context about available second opinion sources
-    let context = detect_second_opinion_context();
+    let additional_context = detect_second_opinion_context();
 
     HookOutput {
-        decision: crate::hooks::HookDecision::Approve,
+        decision: None, // Omit decision to allow
         reason: None,
-        context,
+        additional_context,
     }
 }
 
@@ -815,10 +815,7 @@ mod tests {
 
         let output = handle_user_prompt(&input, &store);
 
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         let state = store.get_session("test-123").unwrap().unwrap();
         assert!(state.review.enabled);
@@ -844,10 +841,7 @@ mod tests {
 
         let output = handle_user_prompt(&input, &store);
 
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         let state = store.get_session("test-456").unwrap().unwrap();
         assert!(!state.review.enabled);
@@ -913,10 +907,7 @@ mod tests {
         };
 
         let output = handle_stop(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
     }
 
     #[test]
@@ -943,7 +934,10 @@ mod tests {
         };
 
         let output = handle_stop(&input, &store);
-        assert!(matches!(output.decision, crate::hooks::HookDecision::Block));
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
         assert!(output.reason.is_some());
 
         // Check block_count incremented
@@ -978,10 +972,7 @@ mod tests {
         };
 
         let output = handle_stop(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
     }
 
     #[test]
@@ -1011,7 +1002,10 @@ mod tests {
         };
 
         let output = handle_stop(&input, &store);
-        assert!(matches!(output.decision, crate::hooks::HookDecision::Block));
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
         assert!(output.reason.unwrap().contains("Fix the tests"));
     }
 
@@ -1034,10 +1028,7 @@ mod tests {
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
     }
 
     #[test]
@@ -1057,7 +1048,10 @@ mod tests {
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(output.decision, crate::hooks::HookDecision::Block));
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
         assert!(output.reason.unwrap().contains("SESSION_ID not found"));
     }
 
@@ -1085,7 +1079,10 @@ mod tests {
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(output.decision, crate::hooks::HookDecision::Block));
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
         assert!(output.reason.unwrap().contains("did not record a decision"));
     }
 
@@ -1118,10 +1115,7 @@ mod tests {
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
     }
 
     #[test]
@@ -1153,7 +1147,10 @@ mod tests {
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(output.decision, crate::hooks::HookDecision::Block));
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
         assert!(output.reason.unwrap().contains("before roz started"));
     }
 
@@ -1176,10 +1173,7 @@ mod tests {
         };
 
         let output = handle_session_start(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         let state = store.get_session("new-session").unwrap().unwrap();
         assert_eq!(state.session_id, "new-session");
@@ -1211,10 +1205,7 @@ mod tests {
         };
 
         let output = handle_session_start(&input, &store);
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         // Existing state should be preserved
         let state = store.get_session("existing-session").unwrap().unwrap();
@@ -1252,10 +1243,7 @@ mod tests {
         let output = handle_stop_with_config(&input, &store, &config);
 
         // Should approve because circuit breaker tripped
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         // Check state was updated
         let updated = store.get_session("circuit-test").unwrap().unwrap();
@@ -1290,10 +1278,7 @@ mod tests {
         let config = Config::default();
         let output = handle_stop_with_config(&input, &store, &config);
 
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
     }
 
     #[test]
@@ -1329,10 +1314,7 @@ mod tests {
         let output = handle_stop_with_config(&input, &store, &config);
 
         // Should approve because circuit breaker tripped after increment
-        assert!(matches!(
-            output.decision,
-            crate::hooks::HookDecision::Approve
-        ));
+        assert!(output.decision.is_none());
 
         let updated = store.get_session("issues-circuit").unwrap().unwrap();
         assert!(updated.review.circuit_breaker_tripped);
