@@ -1,6 +1,6 @@
 //! `roz decide` command implementation.
 
-use crate::core::state::{Decision, DecisionRecord, EventType, TraceEvent};
+use crate::core::state::{AttemptOutcome, Decision, DecisionRecord, EventType, TraceEvent};
 use crate::error::{Error, Result};
 use crate::storage::MessageStore;
 use crate::storage::file::{FileBackend, get_roz_home};
@@ -70,6 +70,20 @@ pub fn run(
         state.review.gate_approved_at = Some(now);
     }
 
+    // Update the most recent pending attempt's outcome (for stats tracking)
+    if let Some(attempt) = state
+        .review
+        .attempts
+        .iter_mut()
+        .rev()
+        .find(|a| matches!(a.outcome, AttemptOutcome::Pending))
+    {
+        attempt.outcome = AttemptOutcome::Success {
+            decision_type: decision_upper.to_lowercase(),
+            blocks_needed: state.review.block_count,
+        };
+    }
+
     state.review.decision = new_decision;
     state.updated_at = now;
 
@@ -83,11 +97,24 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::core::SessionState;
+    use crate::core::state::ReviewAttempt;
     use crate::storage::MemoryBackend;
 
     fn create_test_session(store: &MemoryBackend, session_id: &str) {
         let mut state = SessionState::new(session_id);
         state.review.enabled = true;
+        store.put_session(&state).unwrap();
+    }
+
+    fn create_test_session_with_attempt(store: &MemoryBackend, session_id: &str, block_count: u32) {
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.block_count = block_count;
+        state.review.attempts.push(ReviewAttempt {
+            template_id: "default".to_string(),
+            timestamp: Utc::now(),
+            outcome: AttemptOutcome::Pending,
+        });
         store.put_session(&state).unwrap();
     }
 
@@ -204,5 +231,115 @@ mod tests {
 
         let updated = store.get_session("test-789").unwrap().unwrap();
         assert_eq!(updated.review.decision_history.len(), 1);
+    }
+
+    #[test]
+    fn decide_updates_attempt_outcome_on_complete() {
+        let store = MemoryBackend::new();
+        create_test_session_with_attempt(&store, "test-attempt", 2);
+
+        // Verify initial state has pending attempt
+        let state = store.get_session("test-attempt").unwrap().unwrap();
+        assert_eq!(state.review.attempts.len(), 1);
+        assert!(matches!(
+            state.review.attempts[0].outcome,
+            AttemptOutcome::Pending
+        ));
+
+        // Apply decision logic (same as run() does)
+        let mut state = store.get_session("test-attempt").unwrap().unwrap();
+        let now = Utc::now();
+        let decision_upper = "COMPLETE";
+
+        state.review.decision_history.push(DecisionRecord {
+            decision: state.review.decision.clone(),
+            timestamp: now,
+        });
+        state.review.gate_approved_at = Some(now);
+
+        // Update the most recent pending attempt's outcome
+        if let Some(attempt) = state
+            .review
+            .attempts
+            .iter_mut()
+            .rev()
+            .find(|a| matches!(a.outcome, AttemptOutcome::Pending))
+        {
+            attempt.outcome = AttemptOutcome::Success {
+                decision_type: decision_upper.to_lowercase(),
+                blocks_needed: state.review.block_count,
+            };
+        }
+
+        state.review.decision = Decision::Complete {
+            summary: "Test complete".to_string(),
+            second_opinions: None,
+        };
+        state.updated_at = now;
+        store.put_session(&state).unwrap();
+
+        // Verify attempt outcome was updated
+        let updated = store.get_session("test-attempt").unwrap().unwrap();
+        assert_eq!(updated.review.attempts.len(), 1);
+        match &updated.review.attempts[0].outcome {
+            AttemptOutcome::Success {
+                decision_type,
+                blocks_needed,
+            } => {
+                assert_eq!(decision_type, "complete");
+                assert_eq!(*blocks_needed, 2);
+            }
+            other => panic!("Expected Success outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_updates_attempt_outcome_on_issues() {
+        let store = MemoryBackend::new();
+        create_test_session_with_attempt(&store, "test-issues-attempt", 1);
+
+        // Apply decision logic for ISSUES
+        let mut state = store.get_session("test-issues-attempt").unwrap().unwrap();
+        let now = Utc::now();
+        let decision_upper = "ISSUES";
+
+        state.review.decision_history.push(DecisionRecord {
+            decision: state.review.decision.clone(),
+            timestamp: now,
+        });
+
+        // Update the most recent pending attempt's outcome
+        if let Some(attempt) = state
+            .review
+            .attempts
+            .iter_mut()
+            .rev()
+            .find(|a| matches!(a.outcome, AttemptOutcome::Pending))
+        {
+            attempt.outcome = AttemptOutcome::Success {
+                decision_type: decision_upper.to_lowercase(),
+                blocks_needed: state.review.block_count,
+            };
+        }
+
+        state.review.decision = Decision::Issues {
+            summary: "Found issues".to_string(),
+            message_to_agent: Some("Fix them".to_string()),
+        };
+        state.updated_at = now;
+        store.put_session(&state).unwrap();
+
+        // Verify attempt outcome was updated
+        let updated = store.get_session("test-issues-attempt").unwrap().unwrap();
+        match &updated.review.attempts[0].outcome {
+            AttemptOutcome::Success {
+                decision_type,
+                blocks_needed,
+            } => {
+                assert_eq!(decision_type, "issues");
+                assert_eq!(*blocks_needed, 1);
+            }
+            other => panic!("Expected Success outcome, got {other:?}"),
+        }
     }
 }

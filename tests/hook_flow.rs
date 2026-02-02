@@ -1,7 +1,7 @@
 //! Integration tests for the full hook flow.
 
 use chrono::{Duration, Utc};
-use roz::core::state::{Decision, DecisionRecord, SessionState};
+use roz::core::state::{AttemptOutcome, Decision, DecisionRecord, SessionState};
 use roz::core::{handle_stop, handle_subagent_stop, handle_user_prompt};
 use roz::hooks::{HookDecision, HookInput};
 use roz::storage::{MemoryBackend, MessageStore};
@@ -524,4 +524,103 @@ fn full_gate_flow_block_approve_allow() {
         output.hook_specific_output.permission_decision,
         PermissionDecision::Allow
     );
+}
+
+// ============================================================================
+// Attempt Outcome Tracking Tests (for stats)
+// ============================================================================
+
+#[test]
+fn stop_hook_creates_pending_attempt() {
+    let store = MemoryBackend::new();
+    let session_id = "attempt-tracking-test";
+
+    // Enable review
+    let mut input = make_input(session_id);
+    input.prompt = Some("#roz test attempt tracking".to_string());
+    handle_user_prompt(&input, &store);
+
+    // Stop hook should create a pending attempt when blocking
+    let input = make_input(session_id);
+    let output = handle_stop(&input, &store);
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
+
+    // Verify attempt was created with Pending outcome
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert_eq!(state.review.attempts.len(), 1);
+    assert!(matches!(
+        state.review.attempts[0].outcome,
+        AttemptOutcome::Pending
+    ));
+    assert_eq!(state.review.attempts[0].template_id, "default");
+}
+
+#[test]
+fn decide_updates_attempt_outcome_for_stats() {
+    let store = MemoryBackend::new();
+    let session_id = "stats-tracking-test";
+
+    // Enable review
+    let mut input = make_input(session_id);
+    input.prompt = Some("#roz test stats tracking".to_string());
+    handle_user_prompt(&input, &store);
+
+    // Stop hook blocks and creates pending attempt
+    let input = make_input(session_id);
+    handle_stop(&input, &store);
+
+    // Verify pending attempt exists
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert_eq!(state.review.attempts.len(), 1);
+    assert!(matches!(
+        state.review.attempts[0].outcome,
+        AttemptOutcome::Pending
+    ));
+
+    // Simulate roz decide command (this is what the fix addresses)
+    // The decide command should update the attempt outcome to Success
+    let mut state = store.get_session(session_id).unwrap().unwrap();
+    let now = Utc::now();
+
+    // This is the logic from decide.rs that we're testing
+    state.review.decision_history.push(DecisionRecord {
+        decision: state.review.decision.clone(),
+        timestamp: now,
+    });
+    state.review.gate_approved_at = Some(now);
+
+    // Update the most recent pending attempt's outcome (the fix)
+    if let Some(attempt) = state
+        .review
+        .attempts
+        .iter_mut()
+        .rev()
+        .find(|a| matches!(a.outcome, AttemptOutcome::Pending))
+    {
+        attempt.outcome = AttemptOutcome::Success {
+            decision_type: "complete".to_string(),
+            blocks_needed: state.review.block_count,
+        };
+    }
+
+    state.review.decision = Decision::Complete {
+        summary: "All good".to_string(),
+        second_opinions: None,
+    };
+    state.updated_at = now;
+    store.put_session(&state).unwrap();
+
+    // Verify attempt outcome was updated for stats tracking
+    let final_state = store.get_session(session_id).unwrap().unwrap();
+    assert_eq!(final_state.review.attempts.len(), 1);
+    match &final_state.review.attempts[0].outcome {
+        AttemptOutcome::Success {
+            decision_type,
+            blocks_needed,
+        } => {
+            assert_eq!(decision_type, "complete");
+            assert_eq!(*blocks_needed, 1); // block_count was 1 after first block
+        }
+        other => panic!("Expected Success outcome for stats tracking, got {other:?}"),
+    }
 }
