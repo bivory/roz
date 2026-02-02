@@ -79,4 +79,17 @@ RUN mkdir -p ~/.local/bin \
     && rm /tmp/tissue.tar.gz
 RUN tissue version
 
+# Install roz - Step 1: Install the binary from latest release
+RUN curl -fsSL https://raw.githubusercontent.com/bivory/roz/main/.claude-plugin/install.sh | bash
+
+# Verify roz binary is installed
+RUN roz --version
+
+# Install roz - Step 2: Install the Claude Code plugin
+RUN claude plugin marketplace add bivory/roz \
+    && claude plugin install roz@bivory
+
+# Verify roz plugin is installed
+RUN claude plugin list | grep -q roz
+
 USER root
