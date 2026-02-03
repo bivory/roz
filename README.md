@@ -5,7 +5,7 @@ completion.
 
 Named after Monsters Inc.'s Roz ("I'm watching you, Wazowski. Always
 watching."), roz uses Claude Code hooks to block agent exit until a separate
-reviewer agent approves the work.
+reviewer agent approves the work. This project is inspired by alice.
 
 ## Installation
 
