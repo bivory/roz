@@ -51,13 +51,13 @@ jobs:
           fi
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: roz-${{ matrix.target }}
           path: dist/roz-${{ matrix.target }}
 
       - name: Upload checksum artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: roz-${{ matrix.target }}.sha256
           path: dist/roz-${{ matrix.target }}.sha256
