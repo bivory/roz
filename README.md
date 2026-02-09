@@ -32,7 +32,7 @@ roz --version
 In Claude Code:
 
 ```text
-/plugin marketplace add bivory/roz
+/plugin marketplace add bivory/claude-plugin-marketplace
 /plugin install roz@bivory
 ```
 
