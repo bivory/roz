@@ -23,4 +23,5 @@ config:
 # Ignore generated files
 ignores:
   - "target/**"
+  - "memory/**"
   - "node_modules/**"
