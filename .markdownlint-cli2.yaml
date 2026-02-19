@@ -13,6 +13,11 @@ config:
   # Disable emphasis as heading - used intentionally for quotes
   MD036: false
 
+  # Allow duplicate headings in changelog (Fixed, Changed, etc. repeat per version)
+  # MD024 siblings_only allows same headings under different parent headings
+  MD024:
+    siblings_only: true
+
   # Allow YAML front matter (used in agents/roz.md)
   MD041:
     front_matter_title: ""
