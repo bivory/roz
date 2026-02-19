@@ -21,6 +21,28 @@ fn generate_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Maximum size for stored user prompts (10KB).
+const MAX_PROMPT_SIZE: usize = 10 * 1024;
+
+/// Truncate a prompt to avoid storing excessively large strings.
+fn truncate_prompt(prompt: &str) -> String {
+    if prompt.len() <= MAX_PROMPT_SIZE {
+        prompt.to_string()
+    } else {
+        // Truncate at a character boundary
+        let truncate_at = prompt
+            .char_indices()
+            .take_while(|(i, _)| *i < MAX_PROMPT_SIZE)
+            .last()
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        format!(
+            "{}... [truncated, original {} bytes]",
+            &prompt[..truncate_at],
+            prompt.len()
+        )
+    }
+}
+
 /// Handle the session-start hook.
 ///
 /// Initializes session state and detects available second opinion sources.
@@ -94,6 +116,19 @@ fn command_exists(cmd: &str) -> bool {
 ///
 /// Detects `#roz` prefix to enable review and stores the prompt.
 pub fn handle_user_prompt(input: &HookInput, store: &dyn MessageStore) -> HookOutput {
+    handle_user_prompt_with_config(input, store, &Config::default())
+}
+
+/// Handle the user-prompt hook with explicit config.
+///
+/// Detects `#roz` prefix or `ReviewMode::Always` to enable review and stores the prompt.
+pub fn handle_user_prompt_with_config(
+    input: &HookInput,
+    store: &dyn MessageStore,
+    config: &Config,
+) -> HookOutput {
+    use crate::config::ReviewMode;
+
     let session_id = &input.session_id;
     let prompt = input.prompt.as_deref().unwrap_or("");
 
@@ -112,10 +147,19 @@ pub fn handle_user_prompt(input: &HookInput, store: &dyn MessageStore) -> HookOu
     // Always track last prompt time
     state.review.last_prompt_at = Some(now);
 
-    // Check for #roz prefix
-    if prompt.trim_start().starts_with("#roz") {
+    // Check if review should be enabled:
+    // 1. ReviewMode::Always enables review for all prompts
+    // 2. #roz prefix enables review for this prompt
+    // 3. ReviewMode::Never disables all review (skip even #roz prefix)
+    let should_enable = match config.review.mode {
+        ReviewMode::Always => true,
+        ReviewMode::Never => false,
+        ReviewMode::Prompt => prompt.trim_start().starts_with("#roz"),
+    };
+
+    if should_enable {
         state.review.enabled = true;
-        state.review.user_prompts.push(prompt.to_string());
+        state.review.user_prompts.push(truncate_prompt(prompt));
         state.review.decision = Decision::Pending; // Reset for new review
 
         state.trace.push(TraceEvent {
@@ -186,7 +230,12 @@ pub fn handle_stop_with_config(
     }
 
     // Check circuit breaker BEFORE incrementing block count
-    if circuit_breaker::should_trip(&state, &config.circuit_breaker) {
+    // If previously tripped but cooldown elapsed, reset the circuit breaker
+    if state.review.circuit_breaker_tripped
+        && !circuit_breaker::should_trip(&state, &config.circuit_breaker)
+    {
+        circuit_breaker::reset(&mut state);
+    } else if circuit_breaker::should_trip(&state, &config.circuit_breaker) {
         circuit_breaker::trip(&mut state);
         state.updated_at = now;
         let _ = store.put_session(&state);
@@ -221,12 +270,11 @@ pub fn handle_stop_with_config(
             HookOutput::approve()
         }
         Decision::Issues {
-            message_to_agent, ..
+            summary,
+            message_to_agent,
         } => {
-            // Clone the message before mutable operations
-            let msg = message_to_agent.clone().unwrap_or_else(|| {
-                "Issues were found. Please address them and try again.".to_string()
-            });
+            // Use message_to_agent if provided, otherwise fall back to summary
+            let msg = message_to_agent.clone().unwrap_or_else(|| summary.clone());
 
             state.review.block_count += 1;
 
@@ -592,11 +640,12 @@ fn normalize_bash_command(cmd: &str) -> String {
         cmd
     };
 
+    // Strip leading environment variable assignments (before nested shell check)
+    // This handles: FOO=1 bash -c "cmd" -> bash -c "cmd"
+    let cmd = strip_env_vars(cmd);
+
     // Handle nested shells: bash -c "cmd" or sh -c "cmd"
     let cmd = extract_nested_shell_command(cmd).unwrap_or(cmd);
-
-    // Strip leading environment variable assignments
-    let cmd = strip_env_vars(cmd);
 
     // Take first 80 chars for matching
     cmd.chars().take(80).collect()
@@ -655,11 +704,21 @@ fn extract_nested_shell_command(cmd: &str) -> Option<&str> {
     for shell in shells {
         if let Some(stripped) = cmd.strip_prefix(shell) {
             let rest = stripped.trim();
-            // Extract quoted command
-            if rest.starts_with('"') {
-                return rest.get(1..rest.len() - 1); // Strip quotes
-            } else if rest.starts_with('\'') {
-                return rest.get(1..rest.len() - 1);
+            // Extract quoted command - find matching closing quote
+            if let Some(inner) = rest.strip_prefix('"') {
+                // Find closing double quote
+                if let Some(close_pos) = inner.find('"') {
+                    return Some(&inner[..close_pos]);
+                }
+                // No closing quote found, return as-is without the opening quote
+                return Some(inner);
+            } else if let Some(inner) = rest.strip_prefix('\'') {
+                // Find closing single quote
+                if let Some(close_pos) = inner.find('\'') {
+                    return Some(&inner[..close_pos]);
+                }
+                // No closing quote found, return as-is without the opening quote
+                return Some(inner);
             }
             return Some(rest);
         }
@@ -756,6 +815,7 @@ fn record_review_attempt(state: &mut SessionState, template_id: &str) {
 mod tests {
     use super::*;
     use crate::storage::MemoryBackend;
+    use std::path::PathBuf;
 
     #[test]
     fn extract_session_id_equals() {
@@ -1570,6 +1630,52 @@ mod tests {
         assert_eq!(normalized, "gh issue close 123");
     }
 
+    #[test]
+    fn normalize_multiple_pipes() {
+        // With multiple pipes, take rightmost command
+        let normalized = normalize_bash_command("cat file | grep foo | head -5");
+        assert_eq!(normalized, "head -5");
+    }
+
+    #[test]
+    fn normalize_pipe_with_env() {
+        let normalized = normalize_bash_command("echo y | GH_TOKEN=abc gh issue close 123");
+        assert_eq!(normalized, "gh issue close 123");
+    }
+
+    #[test]
+    fn normalize_quoted_pipe_preserved() {
+        // Pipe inside quotes should not be split
+        let normalized = normalize_bash_command("echo 'hello | world'");
+        assert_eq!(normalized, "echo 'hello | world'");
+    }
+
+    #[test]
+    fn normalize_double_quoted_pipe_preserved() {
+        // Pipe inside double quotes should not be split
+        let normalized = normalize_bash_command("echo \"foo | bar\"");
+        assert_eq!(normalized, "echo \"foo | bar\"");
+    }
+
+    #[test]
+    fn normalize_sh_c_variant() {
+        let normalized = normalize_bash_command("sh -c 'ls -la'");
+        assert_eq!(normalized, "ls -la");
+    }
+
+    #[test]
+    fn normalize_complex_env_chain() {
+        // Multiple env vars
+        let normalized = normalize_bash_command("FOO=1 BAR=2 BAZ=3 mycommand arg");
+        assert_eq!(normalized, "mycommand arg");
+    }
+
+    #[test]
+    fn normalize_env_with_nested_shell() {
+        let normalized = normalize_bash_command("FOO=1 bash -c \"inner cmd\"");
+        assert_eq!(normalized, "inner cmd");
+    }
+
     // Glob matching tests
 
     #[test]
@@ -1942,5 +2048,203 @@ mod tests {
         // Last event should be index 199
         let last = state.trace.last().unwrap();
         assert_eq!(last.payload["index"], 199);
+    }
+
+    // ========================================================================
+    // ReviewMode Tests
+    // ========================================================================
+
+    #[test]
+    fn review_mode_always_enables_review_without_prefix() {
+        use crate::config::ReviewMode;
+
+        let store = MemoryBackend::new();
+        let mut config = Config::default();
+        config.review.mode = ReviewMode::Always;
+
+        let input = HookInput {
+            session_id: "test-always-mode".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            prompt: Some("fix the bug".to_string()), // No #roz prefix
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            subagent_type: None,
+            subagent_prompt: None,
+            subagent_started_at: None,
+        };
+
+        handle_user_prompt_with_config(&input, &store, &config);
+
+        let state = store.get_session("test-always-mode").unwrap().unwrap();
+        assert!(state.review.enabled);
+        assert_eq!(state.review.user_prompts.len(), 1);
+    }
+
+    #[test]
+    fn review_mode_never_disables_review_even_with_prefix() {
+        use crate::config::ReviewMode;
+
+        let store = MemoryBackend::new();
+        let mut config = Config::default();
+        config.review.mode = ReviewMode::Never;
+
+        let input = HookInput {
+            session_id: "test-never-mode".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            prompt: Some("#roz fix the bug".to_string()), // Has #roz prefix
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            subagent_type: None,
+            subagent_prompt: None,
+            subagent_started_at: None,
+        };
+
+        handle_user_prompt_with_config(&input, &store, &config);
+
+        let state = store.get_session("test-never-mode").unwrap().unwrap();
+        assert!(!state.review.enabled);
+        assert!(state.review.user_prompts.is_empty());
+    }
+
+    #[test]
+    fn review_mode_prompt_requires_prefix() {
+        use crate::config::ReviewMode;
+
+        let store = MemoryBackend::new();
+        let mut config = Config::default();
+        config.review.mode = ReviewMode::Prompt; // Default mode
+
+        // Without prefix - no review
+        let input = HookInput {
+            session_id: "test-prompt-mode-1".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            prompt: Some("fix the bug".to_string()),
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            subagent_type: None,
+            subagent_prompt: None,
+            subagent_started_at: None,
+        };
+
+        handle_user_prompt_with_config(&input, &store, &config);
+        let state = store.get_session("test-prompt-mode-1").unwrap().unwrap();
+        assert!(!state.review.enabled);
+
+        // With prefix - review enabled
+        let input = HookInput {
+            session_id: "test-prompt-mode-2".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            prompt: Some("#roz fix the bug".to_string()),
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            subagent_type: None,
+            subagent_prompt: None,
+            subagent_started_at: None,
+        };
+
+        handle_user_prompt_with_config(&input, &store, &config);
+        let state = store.get_session("test-prompt-mode-2").unwrap().unwrap();
+        assert!(state.review.enabled);
+    }
+
+    // ========================================================================
+    // extract_nested_shell_command Tests
+    // ========================================================================
+
+    #[test]
+    fn extract_nested_shell_double_quotes() {
+        let cmd = "bash -c \"echo hello\"";
+        assert_eq!(extract_nested_shell_command(cmd), Some("echo hello"));
+    }
+
+    #[test]
+    fn extract_nested_shell_single_quotes() {
+        let cmd = "bash -c 'echo hello'";
+        assert_eq!(extract_nested_shell_command(cmd), Some("echo hello"));
+    }
+
+    #[test]
+    fn extract_nested_shell_with_trailing_content() {
+        // This was the bug: extra content after the quoted command
+        let cmd = "bash -c \"echo hello\" extra_stuff";
+        assert_eq!(extract_nested_shell_command(cmd), Some("echo hello"));
+    }
+
+    #[test]
+    fn extract_nested_shell_sh_variant() {
+        let cmd = "sh -c \"ls -la\"";
+        assert_eq!(extract_nested_shell_command(cmd), Some("ls -la"));
+    }
+
+    #[test]
+    fn extract_nested_shell_full_path() {
+        let cmd = "/bin/bash -c 'pwd'";
+        assert_eq!(extract_nested_shell_command(cmd), Some("pwd"));
+    }
+
+    #[test]
+    fn extract_nested_shell_no_quotes() {
+        let cmd = "bash -c pwd";
+        assert_eq!(extract_nested_shell_command(cmd), Some("pwd"));
+    }
+
+    #[test]
+    fn extract_nested_shell_not_a_shell() {
+        let cmd = "echo hello";
+        assert_eq!(extract_nested_shell_command(cmd), None);
+    }
+
+    #[test]
+    fn extract_nested_shell_unclosed_quote() {
+        // Edge case: unclosed quote should return rest without opening quote
+        let cmd = "bash -c \"echo hello";
+        let result = extract_nested_shell_command(cmd);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "echo hello");
+    }
+
+    // ========================================================================
+    // Prompt Truncation Tests
+    // ========================================================================
+
+    #[test]
+    fn truncate_prompt_short() {
+        let prompt = "Short prompt";
+        assert_eq!(truncate_prompt(prompt), "Short prompt");
+    }
+
+    #[test]
+    fn truncate_prompt_at_limit() {
+        let prompt = "x".repeat(MAX_PROMPT_SIZE);
+        let result = truncate_prompt(&prompt);
+        assert_eq!(result.len(), MAX_PROMPT_SIZE);
+        assert!(!result.contains("truncated"));
+    }
+
+    #[test]
+    fn truncate_prompt_over_limit() {
+        let prompt = "x".repeat(MAX_PROMPT_SIZE + 100);
+        let result = truncate_prompt(&prompt);
+        assert!(result.contains("truncated"));
+        assert!(result.contains(&format!("{}", MAX_PROMPT_SIZE + 100)));
+    }
+
+    #[test]
+    fn truncate_prompt_unicode_boundary() {
+        // Create a prompt with multi-byte characters that would be truncated
+        // Each emoji is 4 bytes, so we need enough to exceed the limit
+        let emoji_count = MAX_PROMPT_SIZE / 4 + 10;
+        let prompt: String = std::iter::repeat_n('🎉', emoji_count).collect();
+        let result = truncate_prompt(&prompt);
+        // Should truncate at a valid character boundary
+        assert!(result.is_char_boundary(result.len() - 1) || result.ends_with(']'));
     }
 }

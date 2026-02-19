@@ -76,6 +76,10 @@ pub struct ReviewState {
     #[serde(default)]
     pub circuit_breaker_tripped: bool,
 
+    /// When the circuit breaker was tripped (for cooldown tracking).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circuit_breaker_tripped_at: Option<DateTime<Utc>>,
+
     /// Track each block attempt for A/B testing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<ReviewAttempt>,

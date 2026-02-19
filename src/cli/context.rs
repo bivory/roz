@@ -75,11 +75,21 @@ pub fn run(session_id: &str) -> Result<()> {
 }
 
 /// Truncate a prompt for display.
+///
+/// Handles Unicode properly by truncating at character boundaries.
 fn truncate_prompt(prompt: &str, max_len: usize) -> String {
     // Take first line or up to max_len
     let first_line = prompt.lines().next().unwrap_or(prompt);
-    if first_line.len() > max_len {
-        format!("{}...", &first_line[..max_len])
+
+    // Count characters to check if truncation is needed
+    let char_count = first_line.chars().count();
+    if char_count > max_len {
+        // Find the byte position after max_len characters
+        let truncate_at = first_line
+            .char_indices()
+            .nth(max_len)
+            .map_or(first_line.len(), |(idx, _)| idx);
+        format!("{}...", &first_line[..truncate_at])
     } else if prompt.lines().count() > 1 {
         format!("{first_line} [...]")
     } else {
@@ -242,5 +252,36 @@ mod tests {
         // One over should truncate
         assert!(result.len() < 105);
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_unicode_characters() {
+        // Test with multi-byte UTF-8 characters (emoji is 4 bytes, CJK is 3 bytes)
+        let prompt = "Hello 世界! 🎉🎉🎉 test"; // "世界" are 3-byte chars, "🎉" are 4-byte chars
+        let result = truncate_prompt(prompt, 10);
+        // Should truncate at character boundary, not byte boundary
+        assert!(result.ends_with("..."));
+        // Result should be valid UTF-8 (this would panic if we sliced incorrectly)
+        assert!(result.is_ascii() || result.chars().count() > 0);
+    }
+
+    #[test]
+    fn truncate_unicode_exact_boundary() {
+        // 5 emoji characters (4 bytes each = 20 bytes total)
+        let prompt = "🎉🎉🎉🎉🎉";
+        let result = truncate_prompt(prompt, 5);
+        // Exactly 5 characters, should not truncate
+        assert_eq!(result, "🎉🎉🎉🎉🎉");
+        assert!(!result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_unicode_one_over() {
+        // 6 emoji characters
+        let prompt = "🎉🎉🎉🎉🎉🎉";
+        let result = truncate_prompt(prompt, 5);
+        // Should truncate to 5 chars + "..."
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 8); // 5 emoji + 3 for "..."
     }
 }

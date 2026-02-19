@@ -80,9 +80,13 @@ impl TemplateStats {
 ///
 /// Returns an error if storage operations fail.
 pub fn run(days: u32) -> Result<()> {
+    /// Maximum number of sessions to analyze.
+    /// Set high enough to effectively handle any realistic number of sessions.
+    const MAX_SESSIONS_TO_ANALYZE: usize = 1_000_000;
+
     let store = FileBackend::new(get_roz_home())?;
     let cutoff = Utc::now() - Duration::days(i64::from(days));
-    let sessions = store.list_sessions(10000)?;
+    let sessions = store.list_sessions(MAX_SESSIONS_TO_ANALYZE)?;
 
     let mut stats: HashMap<String, TemplateStats> = HashMap::new();
     let mut total_sessions = 0;

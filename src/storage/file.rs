@@ -1,7 +1,7 @@
 //! File-based storage backend.
 
 use crate::core::SessionState;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::storage::traits::{MessageStore, SessionSummary};
 use std::fs;
 use std::path::PathBuf;
@@ -31,10 +31,32 @@ impl FileBackend {
             .join("sessions")
             .join(format!("{session_id}.json"))
     }
+
+    /// Validate that a session ID is safe to use as a filename.
+    ///
+    /// Returns true if the `session_id`:
+    /// - Is not empty
+    /// - Contains only alphanumeric characters, hyphens, and underscores
+    /// - Does not start with a dot (hidden files)
+    /// - Does not contain path separators
+    fn is_valid_session_id(session_id: &str) -> bool {
+        !session_id.is_empty()
+            && !session_id.starts_with('.')
+            && session_id
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    }
 }
 
 impl MessageStore for FileBackend {
     fn get_session(&self, session_id: &str) -> Result<Option<SessionState>> {
+        // Validate session_id to prevent path traversal and invalid filenames
+        if !Self::is_valid_session_id(session_id) {
+            return Err(Error::InvalidState(format!(
+                "Invalid session ID: '{session_id}'"
+            )));
+        }
+
         let path = self.session_path(session_id);
         if !path.exists() {
             return Ok(None);
@@ -45,6 +67,14 @@ impl MessageStore for FileBackend {
     }
 
     fn put_session(&self, state: &SessionState) -> Result<()> {
+        // Validate session_id to prevent path traversal and invalid filenames
+        if !Self::is_valid_session_id(&state.session_id) {
+            return Err(Error::InvalidState(format!(
+                "Invalid session ID: '{}'",
+                state.session_id
+            )));
+        }
+
         let path = self.session_path(&state.session_id);
         let temp = path.with_extension("tmp");
 
@@ -92,6 +122,13 @@ impl MessageStore for FileBackend {
     }
 
     fn delete_session(&self, session_id: &str) -> Result<()> {
+        // Validate session_id to prevent path traversal
+        if !Self::is_valid_session_id(session_id) {
+            return Err(Error::InvalidState(format!(
+                "Invalid session ID: '{session_id}'"
+            )));
+        }
+
         let path = self.session_path(session_id);
         if path.exists() {
             fs::remove_file(&path)?;
@@ -351,5 +388,64 @@ mod tests {
         assert!(
             retrieved.review.user_prompts.len() == 1 || retrieved.review.user_prompts.len() == 2
         );
+    }
+
+    // ========================================================================
+    // Session ID Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn get_session_rejects_empty_id() {
+        let (store, _temp) = create_test_backend();
+        let result = store.get_session("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_session_rejects_path_traversal() {
+        let (store, _temp) = create_test_backend();
+        let result = store.get_session("../../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_session_rejects_hidden_files() {
+        let (store, _temp) = create_test_backend();
+        let result = store.get_session(".hidden");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_session_rejects_special_chars() {
+        let (store, _temp) = create_test_backend();
+        assert!(store.get_session("test/session").is_err());
+        assert!(store.get_session("test\\session").is_err());
+        assert!(store.get_session("test:session").is_err());
+        assert!(store.get_session("test<>session").is_err());
+    }
+
+    #[test]
+    fn get_session_accepts_valid_ids() {
+        let (store, _temp) = create_test_backend();
+        // Valid IDs should not error on validation, but may return None (not found)
+        assert!(store.get_session("test-123").unwrap().is_none());
+        assert!(store.get_session("test_123").unwrap().is_none());
+        assert!(store.get_session("Test123").unwrap().is_none());
+        assert!(store.get_session("abc123-def456-789xyz").unwrap().is_none());
+    }
+
+    #[test]
+    fn put_session_rejects_invalid_id() {
+        let (store, _temp) = create_test_backend();
+        let mut state = SessionState::new("valid");
+        state.session_id = "../../../etc/passwd".to_string();
+        assert!(store.put_session(&state).is_err());
+    }
+
+    #[test]
+    fn delete_session_rejects_invalid_id() {
+        let (store, _temp) = create_test_backend();
+        assert!(store.delete_session("").is_err());
+        assert!(store.delete_session("../secret").is_err());
     }
 }

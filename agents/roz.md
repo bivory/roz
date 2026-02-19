@@ -180,6 +180,8 @@ The agent will see this and attempt to fix it.
 - **Don't trust the agent's summary** - Verify with `git diff` and file reads
 - **Don't modify code** - You're a reviewer, not an implementer
 - **Don't run destructive commands** - No `rm`, `git reset`, etc.
+- **Don't use gated tools** - Don't use tissue, beads, or other MCP tools that
+  may trigger gates. Use only: Read, Grep, Glob, Bash (for git/roz commands)
 - **Don't approve incomplete work** - If it's not done, say so
 - **Don't be a pushover** - The agent wants to exit; your job is to verify
   first

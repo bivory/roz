@@ -1,17 +1,26 @@
 //! Hook dispatch logic.
 
-use crate::core::{handle_session_start, handle_stop, handle_subagent_stop, handle_user_prompt};
+use crate::config::Config;
+use crate::core::{
+    handle_session_start, handle_stop_with_config, handle_subagent_stop,
+    handle_user_prompt_with_config,
+};
 use crate::hooks::{HookInput, HookOutput};
 use crate::storage::MessageStore;
 
 /// Dispatch a hook by name.
 ///
 /// Returns the appropriate `HookOutput` for the given hook.
-pub fn dispatch_hook(name: &str, input: &HookInput, store: &dyn MessageStore) -> HookOutput {
+pub fn dispatch_hook(
+    name: &str,
+    input: &HookInput,
+    store: &dyn MessageStore,
+    config: &Config,
+) -> HookOutput {
     match name {
         "session-start" => handle_session_start(input, store),
-        "user-prompt" => handle_user_prompt(input, store),
-        "stop" => handle_stop(input, store),
+        "user-prompt" => handle_user_prompt_with_config(input, store, config),
+        "stop" => handle_stop_with_config(input, store, config),
         "subagent-stop" => handle_subagent_stop(input, store),
         _ => {
             eprintln!("roz: warning: unknown hook: {name}");
@@ -44,10 +53,11 @@ mod tests {
     #[test]
     fn dispatch_user_prompt() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let mut input = make_input("test-123");
         input.prompt = Some("#roz test".to_string());
 
-        let output = dispatch_hook("user-prompt", &input, &store);
+        let output = dispatch_hook("user-prompt", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -57,9 +67,10 @@ mod tests {
     #[test]
     fn dispatch_stop() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-123");
 
-        let output = dispatch_hook("stop", &input, &store);
+        let output = dispatch_hook("stop", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -69,9 +80,10 @@ mod tests {
     #[test]
     fn dispatch_subagent_stop() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-123");
 
-        let output = dispatch_hook("subagent-stop", &input, &store);
+        let output = dispatch_hook("subagent-stop", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -81,10 +93,11 @@ mod tests {
     #[test]
     fn dispatch_session_start() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let mut input = make_input("test-123");
         input.source = Some("startup".to_string());
 
-        let output = dispatch_hook("session-start", &input, &store);
+        let output = dispatch_hook("session-start", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -98,9 +111,10 @@ mod tests {
     #[test]
     fn dispatch_unknown_hook() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-123");
 
-        let output = dispatch_hook("unknown", &input, &store);
+        let output = dispatch_hook("unknown", &input, &store, &config);
         // Unknown hooks fail open
         assert!(
             output.decision.is_none(),

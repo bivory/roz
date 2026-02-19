@@ -49,13 +49,15 @@ pub fn run(hook_name: &str) -> Result<()> {
         }
     };
 
+    // Load config for all hooks
+    let config = load_config().unwrap_or_default();
+
     // Dispatch hook - pre-tool-use has different output type
     if hook_name == "pre-tool-use" {
-        let config = load_config().unwrap_or_default();
         let output = handle_pre_tool_use(&input, &config, &store);
         write_json(&output)
     } else {
-        let output = dispatch_hook(hook_name, &input, &store);
+        let output = dispatch_hook(hook_name, &input, &store, &config);
         write_json(&output)
     }
 }
@@ -70,6 +72,7 @@ fn write_json<T: Serialize>(output: &T) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::Config;
     use crate::hooks::dispatch_hook;
     use crate::hooks::{HookDecision, HookInput, HookOutput, PreToolUseOutput};
     use crate::storage::{MemoryBackend, MessageStore};
@@ -93,10 +96,11 @@ mod tests {
     #[test]
     fn dispatch_user_prompt_hook() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let mut input = make_input("test-dispatch-1");
         input.prompt = Some("#roz test".to_string());
 
-        let output = dispatch_hook("user-prompt", &input, &store);
+        let output = dispatch_hook("user-prompt", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -110,9 +114,10 @@ mod tests {
     #[test]
     fn dispatch_session_start_hook() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-dispatch-2");
 
-        let output = dispatch_hook("session-start", &input, &store);
+        let output = dispatch_hook("session-start", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -126,12 +131,13 @@ mod tests {
     #[test]
     fn dispatch_stop_hook_approves_no_review() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-dispatch-3");
 
         // First create session without review
-        dispatch_hook("session-start", &input, &store);
+        dispatch_hook("session-start", &input, &store, &config);
 
-        let output = dispatch_hook("stop", &input, &store);
+        let output = dispatch_hook("stop", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"
@@ -141,25 +147,27 @@ mod tests {
     #[test]
     fn dispatch_stop_hook_blocks_pending_review() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let mut input = make_input("test-dispatch-4");
         input.prompt = Some("#roz test".to_string());
 
         // Enable review
-        dispatch_hook("user-prompt", &input, &store);
+        dispatch_hook("user-prompt", &input, &store, &config);
 
         // Stop should block
         let input = make_input("test-dispatch-4");
-        let output = dispatch_hook("stop", &input, &store);
+        let output = dispatch_hook("stop", &input, &store, &config);
         assert!(matches!(output.decision, Some(HookDecision::Block)));
     }
 
     #[test]
     fn dispatch_unknown_hook_approves() {
         let store = MemoryBackend::new();
+        let config = Config::default();
         let input = make_input("test-unknown");
 
         // Unknown hook should approve (fail-open)
-        let output = dispatch_hook("nonexistent-hook", &input, &store);
+        let output = dispatch_hook("nonexistent-hook", &input, &store, &config);
         assert!(
             output.decision.is_none(),
             "expected approve (decision=None)"

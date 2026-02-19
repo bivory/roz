@@ -101,4 +101,32 @@ mod tests {
         let result: Result<HookInput, _> = serde_json::from_str(json);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn empty_input_fails() {
+        let json = "";
+        let result: Result<HookInput, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_object_fails() {
+        let json = "{}";
+        let result: Result<HookInput, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing session_id and cwd should fail");
+    }
+
+    #[test]
+    fn wrong_type_session_id_fails() {
+        let json = r#"{"session_id": 123, "cwd": "/tmp"}"#;
+        let result: Result<HookInput, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "session_id should be string");
+    }
+
+    #[test]
+    fn null_optional_fields_ok() {
+        let json = r#"{"session_id": "test-123", "cwd": "/tmp", "prompt": null}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert!(input.prompt.is_none());
+    }
 }

@@ -63,10 +63,14 @@ fn parse_duration(s: &str) -> Result<Duration> {
     }
 }
 
+/// Maximum number of sessions to process in a single operation.
+/// Set high enough to effectively handle any realistic number of sessions.
+const MAX_SESSIONS_TO_PROCESS: usize = 1_000_000;
+
 /// Clean sessions older than the given duration.
 fn clean_sessions(store: &dyn MessageStore, before: Duration) -> Result<usize> {
     let cutoff = Utc::now() - before;
-    let sessions = store.list_sessions(10000)?;
+    let sessions = store.list_sessions(MAX_SESSIONS_TO_PROCESS)?;
     let mut removed = 0;
 
     for summary in sessions {

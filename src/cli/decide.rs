@@ -8,6 +8,9 @@ use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
 
+/// Maximum number of decision history entries to keep.
+const MAX_DECISION_HISTORY: usize = 50;
+
 /// Run the decide command.
 ///
 /// Posts a COMPLETE or ISSUES decision for a session.
@@ -44,11 +47,16 @@ pub fn run(
         other => return Err(Error::InvalidDecision(other.to_string())),
     };
 
-    // Preserve history
+    // Preserve history (capped to prevent unbounded growth)
     state.review.decision_history.push(DecisionRecord {
         decision: state.review.decision.clone(),
         timestamp: now,
     });
+    // Keep only the most recent entries if over limit
+    if state.review.decision_history.len() > MAX_DECISION_HISTORY {
+        let excess = state.review.decision_history.len() - MAX_DECISION_HISTORY;
+        state.review.decision_history.drain(0..excess);
+    }
 
     // Add trace event
     let mut payload = json!({
