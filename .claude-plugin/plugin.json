@@ -1,6 +1,6 @@
 {
   "name": "roz",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Quality gate for Claude Code - enforces independent review before task completion",
   "author": {
     "name": "Bryan Ivory",
