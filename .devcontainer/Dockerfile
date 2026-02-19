@@ -90,7 +90,7 @@ RUN claude plugin install roz@bivory
 RUN claude plugin list | grep -q roz
 
 # Install grove
-RUN curl -fsSL https://raw.githubusercontent.com/bivory/grove/main/.claude-plugin/install.sh | bash -s -- v0.3.0 
+RUN curl -fsSL https://raw.githubusercontent.com/bivory/grove/main/.claude-plugin/install.sh | bash -s -- v0.5.0 
 RUN grove --version
 RUN claude plugin install grove@bivory
 RUN claude plugin list | grep -q grove
