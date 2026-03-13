@@ -62,13 +62,14 @@ roz/
 | Type | Location | Description |
 |------|----------|-------------|
 | `HookInput` | `src/hooks/input.rs:10-48` | Input from Claude Code hooks |
-| `HookOutput` | `src/hooks/output.rs:8-51` | Output for Stop/UserPrompt hooks |
-| `HookDecision` | `src/hooks/output.rs:37-42` | Approve/Block enum |
-| `PreToolUseOutput` | `src/hooks/output.rs:54-60` | Output for PreToolUse hooks |
-| `PreToolUseDecision` | `src/hooks/output.rs:62-75` | PreToolUse decision details |
-| `PermissionDecision` | `src/hooks/output.rs:77-84` | Allow/Deny/Ask enum |
+| `HookOutput` | `src/hooks/output.rs:8-25` | Output for Stop/SubagentStop/SessionStart/UserPrompt hooks |
+| `HookDecision` | `src/hooks/output.rs:27-32` | Block enum |
+| `ContextOutput` | `src/hooks/output.rs:34-48` | hookSpecificOutput for context injection (SessionStart, UserPromptSubmit) |
+| `PreToolUseOutput` | `src/hooks/output.rs:66-72` | Output for PreToolUse hooks |
+| `PreToolUseDecision` | `src/hooks/output.rs:74-96` | PreToolUse decision details |
+| `PermissionDecision` | `src/hooks/output.rs:98-106` | Allow/Deny/Ask enum |
 
-Helper constructors for outputs are in `src/hooks/output.rs:86-132`.
+Helper constructors for outputs are in `src/hooks/output.rs:50-92`.
 
 ### 2.2 Session State
 

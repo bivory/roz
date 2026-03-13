@@ -139,11 +139,15 @@ original size recorded.
 - `reason`: Message explaining denial (shown to agent)
 - `updatedInput`: Optional modified tool input
 
-**Output** (to Claude Code):
+**Output for Stop/SubagentStop** (to Claude Code):
 
-- `decision`: "approve" or "block"
+- `decision`: "block" (omit to allow)
 - `reason`: Message explaining block (shown to agent)
-- `context`: Additional context injected into conversation
+
+**Output for SessionStart/UserPromptSubmit** (to Claude Code):
+
+- `hookSpecificOutput.hookEventName`: Hook event name (e.g., "SessionStart")
+- `hookSpecificOutput.additionalContext`: Context injected into conversation
 
 ### 3.4 Trace Events
 

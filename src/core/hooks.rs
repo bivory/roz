@@ -77,12 +77,9 @@ pub fn handle_session_start(input: &HookInput, store: &dyn MessageStore) -> Hook
     }
 
     // Optionally inject context about available second opinion sources
-    let additional_context = detect_second_opinion_context();
-
-    HookOutput {
-        decision: None, // Omit decision to allow
-        reason: None,
-        additional_context,
+    match detect_second_opinion_context() {
+        Some(ctx) => HookOutput::approve_with_context("SessionStart", &ctx),
+        None => HookOutput::approve(),
     }
 }
 

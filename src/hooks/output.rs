@@ -6,6 +6,7 @@ use serde_json::Value;
 /// Output returned from hooks.
 ///
 /// Per Claude Code docs: omit `decision` to allow, set to `"block"` to block.
+/// For context injection (`SessionStart`, `UserPromptSubmit`), use `hook_specific_output`.
 #[derive(Debug, Clone, Serialize)]
 pub struct HookOutput {
     /// The decision - only set to "block" when blocking.
@@ -17,9 +18,10 @@ pub struct HookOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 
-    /// Additional context to inject into the conversation.
-    #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
-    pub additional_context: Option<String>,
+    /// Hook-specific output for context injection.
+    /// Used by `SessionStart` and `UserPromptSubmit` to inject `additionalContext`.
+    #[serde(rename = "hookSpecificOutput", skip_serializing_if = "Option::is_none")]
+    pub hook_specific_output: Option<ContextOutput>,
 }
 
 /// Hook decision type.
@@ -30,6 +32,20 @@ pub enum HookDecision {
     Block,
 }
 
+/// Context output for hooks that inject `additionalContext` via `hookSpecificOutput`.
+///
+/// Used by `SessionStart` and `UserPromptSubmit` hooks.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextOutput {
+    /// The hook event name (e.g., `"SessionStart"`, `"UserPromptSubmit"`).
+    #[serde(rename = "hookEventName")]
+    pub hook_event_name: String,
+
+    /// Additional context to inject into the conversation.
+    #[serde(rename = "additionalContext")]
+    pub additional_context: String,
+}
+
 impl HookOutput {
     /// Create an approve decision (empty output - omit decision to allow).
     #[must_use]
@@ -37,7 +53,7 @@ impl HookOutput {
         Self {
             decision: None,
             reason: None,
-            additional_context: None,
+            hook_specific_output: None,
         }
     }
 
@@ -47,7 +63,22 @@ impl HookOutput {
         Self {
             decision: Some(HookDecision::Block),
             reason: Some(reason.to_string()),
-            additional_context: None,
+            hook_specific_output: None,
+        }
+    }
+
+    /// Create an approve decision with additional context injected via `hookSpecificOutput`.
+    ///
+    /// Used by `SessionStart` and `UserPromptSubmit` hooks.
+    #[must_use]
+    pub fn approve_with_context(hook_event_name: &str, context: &str) -> Self {
+        Self {
+            decision: None,
+            reason: None,
+            hook_specific_output: Some(ContextOutput {
+                hook_event_name: hook_event_name.to_string(),
+                additional_context: context.to_string(),
+            }),
         }
     }
 }
@@ -165,16 +196,34 @@ mod tests {
 
     #[test]
     fn approve_with_context() {
-        let output = HookOutput {
-            decision: None,
-            reason: None,
-            additional_context: Some("roz second opinion sources: codex".to_string()),
-        };
+        let output =
+            HookOutput::approve_with_context("SessionStart", "roz second opinion sources: codex");
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("additionalContext"));
-        assert!(json.contains("codex"));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // Must be wrapped in hookSpecificOutput
+        let specific = &parsed["hookSpecificOutput"];
+        assert_eq!(specific["hookEventName"], "SessionStart");
+        assert_eq!(
+            specific["additionalContext"],
+            "roz second opinion sources: codex"
+        );
+
         // decision should be omitted
-        assert!(!json.contains("decision"));
+        assert!(!json.contains("\"decision\""));
+        // additionalContext must NOT be at top level
+        assert!(parsed.get("additionalContext").is_none());
+    }
+
+    #[test]
+    fn approve_with_context_user_prompt() {
+        let output = HookOutput::approve_with_context("UserPromptSubmit", "extra context");
+        let json = serde_json::to_string(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        let specific = &parsed["hookSpecificOutput"];
+        assert_eq!(specific["hookEventName"], "UserPromptSubmit");
+        assert_eq!(specific["additionalContext"], "extra context");
     }
 
     #[test]
