@@ -72,7 +72,10 @@ pub struct PreToolUseDecision {
     pub permission_decision: PermissionDecision,
 
     /// Reason for the decision (optional).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "permissionDecisionReason"
+    )]
     pub reason: Option<String>,
 
     /// Updated input to replace the original (optional).
@@ -181,8 +184,8 @@ mod tests {
         assert!(json.contains("hookSpecificOutput"));
         assert!(json.contains("PreToolUse"));
         assert!(json.contains("allow"));
-        // reason should be omitted when None
-        assert!(!json.contains("reason"));
+        // permissionDecisionReason should be omitted when None
+        assert!(!json.contains("permissionDecisionReason"));
     }
 
     #[test]
@@ -192,6 +195,7 @@ mod tests {
         assert!(json.contains("hookSpecificOutput"));
         assert!(json.contains("PreToolUse"));
         assert!(json.contains("deny"));
+        assert!(json.contains("permissionDecisionReason"));
         assert!(json.contains("Review required"));
     }
 
@@ -200,7 +204,19 @@ mod tests {
         let output = PreToolUseOutput::ask("This tool requires user approval.");
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("ask"));
+        assert!(json.contains("permissionDecisionReason"));
         assert!(json.contains("user approval"));
+    }
+
+    #[test]
+    fn pre_tool_use_deny_uses_correct_field_name() {
+        let output = PreToolUseOutput::deny("test reason");
+        let json = serde_json::to_string(&output).unwrap();
+        // Must use permissionDecisionReason, not deprecated 'reason'
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let specific = &parsed["hookSpecificOutput"];
+        assert!(specific.get("permissionDecisionReason").is_some());
+        assert!(specific.get("reason").is_none());
     }
 
     #[test]
