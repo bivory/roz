@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-03-13
+
+### Added
+
+- Session lifecycle tracking via `SessionEnd` hook
+- Parse common input fields from Claude Code hooks
+  (`transcript_path`, `permission_mode`, `hook_event_name`, `model`)
+- Defense-in-depth: `stop_hook_active` signal accelerates circuit
+  breaker trips to prevent unnecessary block-continue loops
+
+### Fixed
+
+- Align `SubagentStop` hook fields with Claude Code schema
+- Rename `PreToolUse` field `reason` to `permissionDecisionReason`
+- Wrap `additionalContext` in `hookSpecificOutput` per Claude Code
+  schema
+- Use `CLAUDE_PLUGIN_ROOT` for hook commands in plugin manifest
+- Remove redundant agents array from plugin manifest
+
+### Changed
+
+- Updated README with `stats` command and environment variables
+- Updated DEVELOPMENT project structure to match current codebase
+
 ## [0.1.5] - 2026-02-19
 
 ### Fixed
@@ -53,7 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Review gates for tool patterns
 - Support for Linux and macOS (x86_64 and ARM64)
 
-[Unreleased]: https://github.com/anthropics/roz/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/anthropics/roz/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/anthropics/roz/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/anthropics/roz/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/anthropics/roz/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/anthropics/roz/compare/v0.1.2...v0.1.3
