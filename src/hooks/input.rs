@@ -13,6 +13,18 @@ pub struct HookInput {
     /// Current working directory.
     pub cwd: PathBuf,
 
+    /// Path to conversation transcript JSON.
+    #[serde(default)]
+    pub transcript_path: Option<PathBuf>,
+
+    /// Current permission mode (default, plan, acceptEdits, dontAsk, bypassPermissions).
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+
+    /// Name of the hook event that fired (e.g., "`PreToolUse`", "Stop").
+    #[serde(default)]
+    pub hook_event_name: Option<String>,
+
     /// User prompt (for user-prompt hook).
     #[serde(default)]
     pub prompt: Option<String>,
@@ -32,6 +44,10 @@ pub struct HookInput {
     /// Source of session start (startup, resume, clear, compact).
     #[serde(default)]
     pub source: Option<String>,
+
+    /// Model identifier (for session-start hook).
+    #[serde(default)]
+    pub model: Option<String>,
 
     /// Agent type name (for subagent-stop hook, e.g. "roz:roz").
     #[serde(default)]
@@ -186,5 +202,74 @@ mod tests {
         let json = r#"{"session_id": "test-123", "cwd": "/tmp"}"#;
         let input: HookInput = serde_json::from_str(json).unwrap();
         assert!(input.reason.is_none());
+    }
+
+    #[test]
+    fn parse_common_fields() {
+        let json = r#"{
+            "session_id": "test-123",
+            "cwd": "/home/user/project",
+            "transcript_path": "/home/user/.claude/projects/abc/transcript.jsonl",
+            "permission_mode": "default",
+            "hook_event_name": "PreToolUse"
+        }"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            input.transcript_path,
+            Some(PathBuf::from(
+                "/home/user/.claude/projects/abc/transcript.jsonl"
+            ))
+        );
+        assert_eq!(input.permission_mode, Some("default".to_string()));
+        assert_eq!(input.hook_event_name, Some("PreToolUse".to_string()));
+    }
+
+    #[test]
+    fn common_fields_default_to_none() {
+        let json = r#"{"session_id": "test-123", "cwd": "/tmp"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert!(input.transcript_path.is_none());
+        assert!(input.permission_mode.is_none());
+        assert!(input.hook_event_name.is_none());
+        assert!(input.model.is_none());
+    }
+
+    #[test]
+    fn parse_session_start_with_model() {
+        let json = r#"{
+            "session_id": "test-123",
+            "cwd": "/tmp",
+            "source": "startup",
+            "model": "claude-sonnet-4-6",
+            "hook_event_name": "SessionStart",
+            "permission_mode": "default",
+            "transcript_path": "/tmp/transcript.jsonl"
+        }"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.source, Some("startup".to_string()));
+        assert_eq!(input.model, Some("claude-sonnet-4-6".to_string()));
+        assert_eq!(input.hook_event_name, Some("SessionStart".to_string()));
+    }
+
+    #[test]
+    fn parse_all_permission_modes() {
+        let modes = [
+            "default",
+            "plan",
+            "acceptEdits",
+            "dontAsk",
+            "bypassPermissions",
+        ];
+        for mode in modes {
+            let json = format!(
+                r#"{{"session_id": "test-123", "cwd": "/tmp", "permission_mode": "{mode}"}}"#
+            );
+            let input: HookInput = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                input.permission_mode,
+                Some(mode.to_string()),
+                "failed for mode {mode}"
+            );
+        }
     }
 }

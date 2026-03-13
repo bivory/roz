@@ -122,16 +122,27 @@ original size recorded.
 
 **Input** (from Claude Code):
 
+Common fields (all hooks):
+
 - `session_id`: Unique session identifier
 - `cwd`: Working directory
+- `transcript_path`: Path to conversation transcript JSON
+- `permission_mode`: Current permission mode (default, plan, acceptEdits,
+  dontAsk, bypassPermissions)
+- `hook_event_name`: Name of the hook event that fired
+
+Event-specific fields:
+
 - `prompt`: User prompt (for user-prompt hook)
 - `source`: Session source - startup, resume, clear, or compact (for
   session-start hook)
+- `model`: Model identifier (for session-start hook)
 - `tool_name`, `tool_input`: Tool details (for pre-tool-use hook)
 - `agent_type`, `agent_id`, `agent_transcript_path`: Subagent details
   (for subagent-stop hook)
 - `last_assistant_message`: Last message from subagent (for stop/subagent-stop)
 - `stop_hook_active`: Whether a stop hook is already active
+- `reason`: Why the session ended (for session-end hook)
 
 **Output for PreToolUse** (to Claude Code):
 
