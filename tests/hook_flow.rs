@@ -1,8 +1,12 @@
 //! Integration tests for the full hook flow.
 
 use chrono::{Duration, Utc};
-use roz::core::state::{AttemptOutcome, Decision, DecisionRecord, ReviewAttempt, SessionState};
-use roz::core::{handle_stop, handle_subagent_stop, handle_user_prompt};
+use roz::core::state::{
+    AttemptOutcome, Decision, DecisionRecord, EventType, ReviewAttempt, SessionState,
+};
+use roz::core::{
+    handle_session_end, handle_session_start, handle_stop, handle_subagent_stop, handle_user_prompt,
+};
 use roz::hooks::{HookDecision, HookInput};
 use roz::storage::{MemoryBackend, MessageStore};
 use std::path::PathBuf;
@@ -21,6 +25,7 @@ fn make_input(session_id: &str) -> HookInput {
         agent_transcript_path: None,
         last_assistant_message: None,
         stop_hook_active: None,
+        reason: None,
     }
 }
 
@@ -337,6 +342,7 @@ fn make_gate_input(session_id: &str, tool_name: &str) -> HookInput {
         agent_transcript_path: None,
         last_assistant_message: None,
         stop_hook_active: None,
+        reason: None,
     }
 }
 
@@ -652,4 +658,86 @@ fn decide_updates_attempt_outcome_for_stats() {
         }
         other => panic!("Expected Success outcome for stats tracking, got {other:?}"),
     }
+}
+
+// SessionEnd integration tests
+
+#[test]
+fn full_lifecycle_start_prompt_end() {
+    let store = MemoryBackend::new();
+    let session_id = "lifecycle-test-1";
+
+    // Step 1: Session starts
+    let mut input = make_input(session_id);
+    input.source = Some("startup".to_string());
+    let output = handle_session_start(&input, &store);
+    assert!(output.decision.is_none());
+
+    // Step 2: User sends a prompt
+    let mut input = make_input(session_id);
+    input.prompt = Some("#roz fix the bug".to_string());
+    let output = handle_user_prompt(&input, &store);
+    assert!(output.decision.is_none());
+
+    // Step 3: Session ends
+    let mut input = make_input(session_id);
+    input.reason = Some("logout".to_string());
+    let output = handle_session_end(&input, &store);
+    assert!(output.decision.is_none());
+
+    // Verify full trace: SessionStart, UserPrompt, SessionEnd
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert!(state.trace.len() >= 3);
+    assert_eq!(
+        state.trace.first().unwrap().event_type,
+        EventType::SessionStart
+    );
+    assert_eq!(
+        state.trace.last().unwrap().event_type,
+        EventType::SessionEnd
+    );
+    assert_eq!(state.trace.last().unwrap().payload["reason"], "logout");
+}
+
+#[test]
+fn session_end_without_start_approves() {
+    let store = MemoryBackend::new();
+
+    // Session end without any prior session - should fail open
+    let mut input = make_input("no-start-session");
+    input.reason = Some("clear".to_string());
+    let output = handle_session_end(&input, &store);
+    assert!(output.decision.is_none(), "should fail open");
+
+    // No session should be created
+    assert!(store.get_session("no-start-session").unwrap().is_none());
+}
+
+#[test]
+fn session_end_preserves_review_state() {
+    let store = MemoryBackend::new();
+    let session_id = "end-preserves-review";
+
+    // Start session and enable review
+    let mut input = make_input(session_id);
+    input.source = Some("startup".to_string());
+    handle_session_start(&input, &store);
+
+    let mut input = make_input(session_id);
+    input.prompt = Some("#roz do the thing".to_string());
+    handle_user_prompt(&input, &store);
+
+    // Verify review is enabled before session end
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert!(state.review.enabled);
+
+    // End the session
+    let mut input = make_input(session_id);
+    input.reason = Some("prompt_input_exit".to_string());
+    handle_session_end(&input, &store);
+
+    // Review state should be preserved
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert!(state.review.enabled);
+    assert_eq!(state.review.user_prompts.len(), 1);
 }

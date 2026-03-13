@@ -52,6 +52,10 @@ pub struct HookInput {
     /// Whether a stop hook is already active (for stop/subagent-stop hooks).
     #[serde(default)]
     pub stop_hook_active: Option<bool>,
+
+    /// Reason for session end (for session-end hook).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[cfg(test)]
@@ -168,5 +172,19 @@ mod tests {
         let json = r#"{"session_id": "test-123", "cwd": "/tmp", "prompt": null}"#;
         let input: HookInput = serde_json::from_str(json).unwrap();
         assert!(input.prompt.is_none());
+    }
+
+    #[test]
+    fn parse_with_reason() {
+        let json = r#"{"session_id": "test-123", "cwd": "/tmp", "reason": "logout"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.reason, Some("logout".to_string()));
+    }
+
+    #[test]
+    fn reason_defaults_to_none() {
+        let json = r#"{"session_id": "test-123", "cwd": "/tmp"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert!(input.reason.is_none());
     }
 }

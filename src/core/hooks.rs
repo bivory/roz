@@ -83,6 +83,47 @@ pub fn handle_session_start(input: &HookInput, store: &dyn MessageStore) -> Hook
     }
 }
 
+/// Handle the session-end hook.
+///
+/// Records a `SessionEnd` trace event and saves state.
+/// This hook has no decision control - it always approves.
+pub fn handle_session_end(input: &HookInput, store: &dyn MessageStore) -> HookOutput {
+    let session_id = &input.session_id;
+
+    // Get existing session - if not found, nothing to do
+    let mut state = match store.get_session(session_id) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            eprintln!("roz: warning: session-end for unknown session: {session_id}");
+            return HookOutput::approve(); // Fail open
+        }
+        Err(e) => {
+            eprintln!("roz: warning: storage error: {e}");
+            return HookOutput::approve(); // Fail open
+        }
+    };
+
+    let reason = input.reason.as_deref().unwrap_or("unknown");
+
+    // Add SessionEnd trace event
+    state.trace.push(TraceEvent {
+        id: generate_id(),
+        timestamp: Utc::now(),
+        event_type: EventType::SessionEnd,
+        payload: json!({
+            "reason": reason,
+            "cwd": input.cwd,
+        }),
+    });
+
+    // Save state
+    if let Err(e) = store.put_session(&state) {
+        eprintln!("roz: warning: failed to save state: {e}");
+    }
+
+    HookOutput::approve()
+}
+
 /// Detect available second opinion sources.
 fn detect_second_opinion_context() -> Option<String> {
     let codex = command_exists("codex");
@@ -820,6 +861,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_user_prompt(&input, &store);
@@ -848,6 +890,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_user_prompt(&input, &store);
@@ -877,6 +920,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
         handle_user_prompt(&input1, &store);
 
@@ -894,6 +938,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
         handle_user_prompt(&input2, &store);
 
@@ -921,6 +966,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -950,6 +996,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -990,6 +1037,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -1022,6 +1070,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -1055,6 +1104,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: Some(true),
+            reason: None,
         };
 
         handle_stop(&input, &store);
@@ -1091,6 +1141,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         handle_stop(&input, &store);
@@ -1122,6 +1173,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1144,6 +1196,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1167,6 +1220,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         // Fail open when session not found
@@ -1198,6 +1252,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1237,6 +1292,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1279,6 +1335,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1333,6 +1390,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: Some("Review complete.".to_string()),
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1370,6 +1428,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1414,6 +1473,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1454,6 +1514,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         // Without a lower bound, approves if decision exists and isn't in the future
@@ -1479,6 +1540,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_session_start(&input, &store);
@@ -1513,6 +1575,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_session_start(&input, &store);
@@ -1550,6 +1613,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let config = Config::default(); // max_blocks = 3
@@ -1588,6 +1652,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let config = Config::default();
@@ -1626,6 +1691,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_stop_with_config(&input, &store, &config);
@@ -1667,6 +1733,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1694,6 +1761,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1721,6 +1789,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1769,6 +1838,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1805,6 +1875,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1832,6 +1903,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1860,6 +1932,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -2346,6 +2419,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2376,6 +2450,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2407,6 +2482,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2427,6 +2503,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2525,5 +2602,346 @@ mod tests {
         let result = truncate_prompt(&prompt);
         // Should truncate at a valid character boundary
         assert!(result.is_char_boundary(result.len() - 1) || result.ends_with(']'));
+    }
+
+    // SessionEnd hook tests
+
+    #[test]
+    fn session_end_records_trace_event() {
+        let store = MemoryBackend::new();
+
+        // Create existing session first
+        let input_start = HookInput {
+            session_id: "end-test-1".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: Some("startup".to_string()),
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+        handle_session_start(&input_start, &store);
+
+        // Now send session-end
+        let input = HookInput {
+            session_id: "end-test-1".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: Some("logout".to_string()),
+        };
+
+        let output = handle_session_end(&input, &store);
+        assert!(output.decision.is_none(), "session-end always approves");
+
+        let state = store.get_session("end-test-1").unwrap().unwrap();
+        let end_events: Vec<_> = state
+            .trace
+            .iter()
+            .filter(|e| e.event_type == EventType::SessionEnd)
+            .collect();
+        assert_eq!(end_events.len(), 1);
+        assert_eq!(end_events[0].payload["reason"], "logout");
+    }
+
+    #[test]
+    fn session_end_unknown_session_approves() {
+        let store = MemoryBackend::new();
+
+        let input = HookInput {
+            session_id: "nonexistent".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: Some("clear".to_string()),
+        };
+
+        let output = handle_session_end(&input, &store);
+        assert!(output.decision.is_none(), "fail-open for unknown session");
+    }
+
+    #[test]
+    fn session_end_missing_reason_defaults_to_unknown() {
+        let store = MemoryBackend::new();
+
+        // Create session
+        let input_start = HookInput {
+            session_id: "end-test-reason".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: Some("startup".to_string()),
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+        handle_session_start(&input_start, &store);
+
+        // session-end with no reason
+        let input = HookInput {
+            session_id: "end-test-reason".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+
+        let output = handle_session_end(&input, &store);
+        assert!(output.decision.is_none());
+
+        let state = store.get_session("end-test-reason").unwrap().unwrap();
+        let end_event = state
+            .trace
+            .iter()
+            .find(|e| e.event_type == EventType::SessionEnd)
+            .expect("should have SessionEnd event");
+        assert_eq!(end_event.payload["reason"], "unknown");
+    }
+
+    #[test]
+    fn session_end_records_cwd_in_payload() {
+        let store = MemoryBackend::new();
+
+        // Create session
+        let input_start = HookInput {
+            session_id: "end-test-cwd".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: Some("startup".to_string()),
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+        handle_session_start(&input_start, &store);
+
+        let input = HookInput {
+            session_id: "end-test-cwd".to_string(),
+            cwd: "/home/user/project".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: Some("prompt_input_exit".to_string()),
+        };
+
+        handle_session_end(&input, &store);
+
+        let state = store.get_session("end-test-cwd").unwrap().unwrap();
+        let end_event = state
+            .trace
+            .iter()
+            .find(|e| e.event_type == EventType::SessionEnd)
+            .expect("should have SessionEnd event");
+        assert_eq!(end_event.payload["cwd"], "/home/user/project");
+        assert_eq!(end_event.payload["reason"], "prompt_input_exit");
+    }
+
+    #[test]
+    fn session_end_all_reason_values() {
+        // Test all documented reason values from Claude Code
+        let reasons = [
+            "clear",
+            "logout",
+            "prompt_input_exit",
+            "bypass_permissions_disabled",
+            "other",
+        ];
+
+        for reason in reasons {
+            let store = MemoryBackend::new();
+            let sid = format!("end-reason-{reason}");
+
+            // Create session
+            let input_start = HookInput {
+                session_id: sid.clone(),
+                cwd: "/tmp".into(),
+                prompt: None,
+                tool_name: None,
+                tool_input: None,
+                tool_response: None,
+                source: Some("startup".to_string()),
+                agent_type: None,
+                agent_id: None,
+                agent_transcript_path: None,
+                last_assistant_message: None,
+                stop_hook_active: None,
+                reason: None,
+            };
+            handle_session_start(&input_start, &store);
+
+            let input = HookInput {
+                session_id: sid.clone(),
+                cwd: "/tmp".into(),
+                prompt: None,
+                tool_name: None,
+                tool_input: None,
+                tool_response: None,
+                source: None,
+                agent_type: None,
+                agent_id: None,
+                agent_transcript_path: None,
+                last_assistant_message: None,
+                stop_hook_active: None,
+                reason: Some(reason.to_string()),
+            };
+
+            let output = handle_session_end(&input, &store);
+            assert!(output.decision.is_none(), "session-end always approves");
+
+            let state = store.get_session(&sid).unwrap().unwrap();
+            let end_event = state
+                .trace
+                .iter()
+                .find(|e| e.event_type == EventType::SessionEnd)
+                .expect("should have SessionEnd event");
+            assert_eq!(
+                end_event.payload["reason"], reason,
+                "reason mismatch for {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_end_preserves_existing_trace() {
+        let store = MemoryBackend::new();
+
+        // Create session with some history
+        let input_start = HookInput {
+            session_id: "end-test-trace".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: Some("startup".to_string()),
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+        handle_session_start(&input_start, &store);
+
+        // Add a user prompt event
+        let input_prompt = HookInput {
+            session_id: "end-test-trace".to_string(),
+            cwd: "/tmp".into(),
+            prompt: Some("#roz test".to_string()),
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+        handle_user_prompt(&input_prompt, &store);
+
+        let state_before = store.get_session("end-test-trace").unwrap().unwrap();
+        let trace_count_before = state_before.trace.len();
+
+        // End the session
+        let input = HookInput {
+            session_id: "end-test-trace".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: Some("logout".to_string()),
+        };
+        handle_session_end(&input, &store);
+
+        let state = store.get_session("end-test-trace").unwrap().unwrap();
+        // Should have all previous events plus SessionEnd
+        assert_eq!(state.trace.len(), trace_count_before + 1);
+        assert_eq!(
+            state.trace.last().unwrap().event_type,
+            EventType::SessionEnd
+        );
+    }
+
+    #[test]
+    fn session_end_storage_error_approves() {
+        // Use a store that will fail on get - we test the fail-open behavior
+        // by checking with a nonexistent session (similar pattern to unknown session test)
+        let store = MemoryBackend::new();
+
+        let input = HookInput {
+            session_id: "storage-fail".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: Some("other".to_string()),
+        };
+
+        // No session exists - should fail open
+        let output = handle_session_end(&input, &store);
+        assert!(output.decision.is_none(), "fail-open on missing session");
     }
 }

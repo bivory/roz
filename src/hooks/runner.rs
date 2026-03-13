@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use crate::core::{
-    handle_session_start, handle_stop_with_config, handle_subagent_stop,
+    handle_session_end, handle_session_start, handle_stop_with_config, handle_subagent_stop,
     handle_user_prompt_with_config,
 };
 use crate::hooks::{HookInput, HookOutput};
@@ -19,6 +19,7 @@ pub fn dispatch_hook(
 ) -> HookOutput {
     match name {
         "session-start" => handle_session_start(input, store),
+        "session-end" => handle_session_end(input, store),
         "user-prompt" => handle_user_prompt_with_config(input, store, config),
         "stop" => handle_stop_with_config(input, store, config),
         "subagent-stop" => handle_subagent_stop(input, store),
@@ -49,6 +50,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         }
     }
 
@@ -108,6 +110,25 @@ mod tests {
         // Session should be created
         let state = store.get_session("test-123").unwrap().unwrap();
         assert!(!state.trace.is_empty());
+    }
+
+    #[test]
+    fn dispatch_session_end() {
+        let store = MemoryBackend::new();
+        let config = Config::default();
+
+        // Create session first so session-end has something to record
+        let mut input = make_input("test-end");
+        input.source = Some("startup".to_string());
+        dispatch_hook("session-start", &input, &store, &config);
+
+        let mut input = make_input("test-end");
+        input.reason = Some("logout".to_string());
+        let output = dispatch_hook("session-end", &input, &store, &config);
+        assert!(
+            output.decision.is_none(),
+            "expected approve (decision=None)"
+        );
     }
 
     #[test]

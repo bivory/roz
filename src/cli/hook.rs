@@ -92,6 +92,7 @@ mod tests {
             agent_transcript_path: None,
             last_assistant_message: None,
             stop_hook_active: None,
+            reason: None,
         }
     }
 
