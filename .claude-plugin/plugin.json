@@ -13,8 +13,5 @@
     "quality-gate",
     "code-review",
     "safety"
-  ],
-  "agents": [
-    "./agents/roz.md"
   ]
 }
