@@ -213,12 +213,14 @@ pub fn handle_stop_with_config(
 
     let now = Utc::now();
 
-    // Log the stop hook call
+    // Log the stop hook call (include stop_hook_active for debugging)
     state.trace.push(TraceEvent {
         id: generate_id(),
         timestamp: now,
         event_type: EventType::StopHookCalled,
-        payload: json!({}),
+        payload: json!({
+            "stop_hook_active": input.stop_hook_active.unwrap_or(false),
+        }),
     });
 
     // Check if review is enabled
@@ -1031,6 +1033,78 @@ mod tests {
             Some(crate::hooks::HookDecision::Block)
         ));
         assert!(output.reason.unwrap().contains("Fix the tests"));
+    }
+
+    #[test]
+    fn stop_hook_records_stop_hook_active_in_trace() {
+        let store = MemoryBackend::new();
+
+        // Create session with pending review
+        let mut state = SessionState::new("test-trace-active");
+        state.review.enabled = true;
+        store.put_session(&state).unwrap();
+
+        // Call stop with stop_hook_active = true
+        let input = HookInput {
+            session_id: "test-trace-active".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(true),
+        };
+
+        handle_stop(&input, &store);
+
+        // Verify stop_hook_active is recorded in the trace event
+        let state = store.get_session("test-trace-active").unwrap().unwrap();
+        let stop_event = state
+            .trace
+            .iter()
+            .find(|e| e.event_type == EventType::StopHookCalled)
+            .expect("StopHookCalled trace event should exist");
+        assert_eq!(stop_event.payload["stop_hook_active"], true);
+    }
+
+    #[test]
+    fn stop_hook_records_stop_hook_active_false_when_not_set() {
+        let store = MemoryBackend::new();
+
+        let mut state = SessionState::new("test-trace-inactive");
+        state.review.enabled = true;
+        store.put_session(&state).unwrap();
+
+        // Call stop with stop_hook_active = None (defaults to false in trace)
+        let input = HookInput {
+            session_id: "test-trace-inactive".to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+        };
+
+        handle_stop(&input, &store);
+
+        let state = store.get_session("test-trace-inactive").unwrap().unwrap();
+        let stop_event = state
+            .trace
+            .iter()
+            .find(|e| e.event_type == EventType::StopHookCalled)
+            .expect("StopHookCalled trace event should exist");
+        assert_eq!(stop_event.payload["stop_hook_active"], false);
     }
 
     // Subagent stop hook tests
