@@ -110,8 +110,22 @@ cooldown_seconds = 300
 roz list                     # List recent sessions
 roz debug <session_id>       # Full session state
 roz trace <session_id>       # Show trace events
+roz stats                    # Template A/B test results
 roz clean --before 7d        # Remove old sessions
 ```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ROZ_HOME` | Base directory for roz data | `~/.roz` |
+| `ROZ_CONFIG` | Custom config file path | `$ROZ_HOME/config.toml` |
+| `ROZ_STORAGE_PATH` | Session storage directory | `$ROZ_HOME` |
+| `ROZ_MAX_BLOCKS` | Circuit breaker limit | `3` |
+| `ROZ_COOLDOWN_SECONDS` | Circuit breaker reset time | `300` |
+| `ROZ_REVIEW_MODE` | `always`, `never`, or `prompt` | `prompt` |
+| `ROZ_MAX_EVENTS` | Trace event limit | `500` |
+| `ROZ_RETENTION_DAYS` | Cleanup retention period | `7` |
 
 ## License
 

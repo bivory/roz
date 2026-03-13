@@ -13,6 +13,7 @@ mise run test           # Run tests
 mise run clippy         # Lint
 mise run fmt            # Format code
 mise run pre-commit     # All checks before committing
+mise run ci             # Full CI checks (fmt, clippy, test, typos, audit)
 ```
 
 Or directly with cargo:
@@ -172,17 +173,29 @@ mise run release:dry-run
 
 ```text
 src/
-  main.rs           # CLI entry point
-  lib.rs            # Library root
+  main.rs              # CLI entry point
+  lib.rs               # Library root
+  config.rs            # Config parsing (TOML + env vars)
+  error.rs             # Error types
+  template.rs          # Block message templates (A/B testing)
   core/
-    state.rs        # Session state, decisions
-    hooks.rs        # Hook handlers
+    state.rs           # Session state, decisions
+    hooks.rs           # Hook handlers
+    circuit_breaker.rs # Block limit and cooldown logic
   storage/
-    file.rs         # File backend (~/.roz/sessions/)
-    memory.rs       # In-memory backend (testing)
+    file.rs            # File backend (~/.roz/sessions/)
+    memory.rs          # In-memory backend (testing)
   hooks/
-    input.rs        # HookInput parsing
-    output.rs       # HookOutput types
-    runner.rs       # Hook dispatch
-  cli/              # CLI commands
+    input.rs           # HookInput parsing
+    output.rs          # HookOutput types
+    runner.rs          # Hook dispatch
+  cli/
+    hook.rs            # roz hook <name>
+    decide.rs          # roz decide <sid> COMPLETE|ISSUES
+    context.rs         # roz context <sid>
+    list.rs            # roz list
+    debug.rs           # roz debug <sid>
+    trace.rs           # roz trace <sid>
+    stats.rs           # roz stats
+    clean.rs           # roz clean --before <duration>
 ```
