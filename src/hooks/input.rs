@@ -1,6 +1,5 @@
 //! Hook input parsing.
 
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -34,17 +33,25 @@ pub struct HookInput {
     #[serde(default)]
     pub source: Option<String>,
 
-    /// Subagent type (for subagent-stop hook).
+    /// Agent type name (for subagent-stop hook, e.g. "roz:roz").
     #[serde(default)]
-    pub subagent_type: Option<String>,
+    pub agent_type: Option<String>,
 
-    /// Subagent prompt (for subagent-stop hook).
+    /// Unique agent identifier (for subagent-stop hook).
     #[serde(default)]
-    pub subagent_prompt: Option<String>,
+    pub agent_id: Option<String>,
 
-    /// When subagent began execution (for subagent-stop hook).
+    /// Path to the subagent's transcript file (for subagent-stop hook).
     #[serde(default)]
-    pub subagent_started_at: Option<DateTime<Utc>>,
+    pub agent_transcript_path: Option<PathBuf>,
+
+    /// Last message from the subagent (for stop/subagent-stop hooks).
+    #[serde(default)]
+    pub last_assistant_message: Option<String>,
+
+    /// Whether a stop hook is already active (for stop/subagent-stop hooks).
+    #[serde(default)]
+    pub stop_hook_active: Option<bool>,
 }
 
 #[cfg(test)]
@@ -68,17 +75,50 @@ mod tests {
     }
 
     #[test]
-    fn parse_with_subagent_fields() {
+    fn parse_with_agent_fields() {
         let json = r#"{
             "session_id": "test-123",
             "cwd": "/tmp",
-            "subagent_type": "roz:roz",
-            "subagent_prompt": "SESSION_ID=test-123\n\n## Summary\nFixed the bug",
-            "subagent_started_at": "2026-01-31T10:00:00Z"
+            "agent_type": "roz:roz",
+            "agent_id": "agent-abc-123",
+            "agent_transcript_path": "/tmp/transcript.json",
+            "last_assistant_message": "Review complete. All changes verified.",
+            "stop_hook_active": false
         }"#;
         let input: HookInput = serde_json::from_str(json).unwrap();
-        assert_eq!(input.subagent_type, Some("roz:roz".to_string()));
-        assert!(input.subagent_started_at.is_some());
+        assert_eq!(input.agent_type, Some("roz:roz".to_string()));
+        assert_eq!(input.agent_id, Some("agent-abc-123".to_string()));
+        assert_eq!(
+            input.agent_transcript_path,
+            Some(PathBuf::from("/tmp/transcript.json"))
+        );
+        assert_eq!(
+            input.last_assistant_message,
+            Some("Review complete. All changes verified.".to_string())
+        );
+        assert_eq!(input.stop_hook_active, Some(false));
+    }
+
+    #[test]
+    fn parse_with_stop_hook_active() {
+        let json = r#"{
+            "session_id": "test-123",
+            "cwd": "/tmp",
+            "stop_hook_active": true
+        }"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.stop_hook_active, Some(true));
+    }
+
+    #[test]
+    fn parse_agent_fields_default_to_none() {
+        let json = r#"{"session_id": "test-123", "cwd": "/tmp"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert!(input.agent_type.is_none());
+        assert!(input.agent_id.is_none());
+        assert!(input.agent_transcript_path.is_none());
+        assert!(input.last_assistant_message.is_none());
+        assert!(input.stop_hook_active.is_none());
     }
 
     #[test]

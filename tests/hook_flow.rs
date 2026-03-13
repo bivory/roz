@@ -1,7 +1,7 @@
 //! Integration tests for the full hook flow.
 
 use chrono::{Duration, Utc};
-use roz::core::state::{AttemptOutcome, Decision, DecisionRecord, SessionState};
+use roz::core::state::{AttemptOutcome, Decision, DecisionRecord, ReviewAttempt, SessionState};
 use roz::core::{handle_stop, handle_subagent_stop, handle_user_prompt};
 use roz::hooks::{HookDecision, HookInput};
 use roz::storage::{MemoryBackend, MessageStore};
@@ -16,9 +16,11 @@ fn make_input(session_id: &str) -> HookInput {
         tool_input: None,
         tool_response: None,
         source: None,
-        subagent_type: None,
-        subagent_prompt: None,
-        subagent_started_at: None,
+        agent_type: None,
+        agent_id: None,
+        agent_transcript_path: None,
+        last_assistant_message: None,
+        stop_hook_active: None,
     }
 }
 
@@ -126,32 +128,35 @@ fn full_flow_with_issues() {
 }
 
 #[test]
-fn subagent_stop_validates_timestamp() {
+fn subagent_stop_validates_decision_in_review_cycle() {
     let store = MemoryBackend::new();
     let session_id = "subagent-test";
 
-    // Create session with pending review
+    // Create session with pending review and a block attempt (simulating stop hook)
+    let block_time = Utc::now() - Duration::minutes(2);
     let mut state = SessionState::new(session_id);
     state.review.enabled = true;
+    state.review.attempts.push(ReviewAttempt {
+        timestamp: block_time,
+        template_id: "default".to_string(),
+        outcome: AttemptOutcome::Pending,
+    });
     store.put_session(&state).unwrap();
 
-    // Subagent starts
-    let subagent_started = Utc::now();
-
-    // Simulate roz posting a decision during execution
+    // Simulate roz posting a decision during execution (after the block)
     let mut state = store.get_session(session_id).unwrap().unwrap();
     state.review.decision = Decision::Complete {
         summary: "All good".to_string(),
         second_opinions: None,
     };
-    state.updated_at = Utc::now();
+    state.updated_at = Utc::now(); // Decision posted now (after block_time)
     store.put_session(&state).unwrap();
 
-    // Subagent stop validates the decision
-    let mut input = make_input("main-session");
-    input.subagent_type = Some("roz:roz".to_string());
-    input.subagent_prompt = Some(format!("SESSION_ID={session_id}\n\n## Summary\nReviewed"));
-    input.subagent_started_at = Some(subagent_started);
+    // SubagentStop validates: session_id from input, agent_type = roz:roz
+    let mut input = make_input(session_id);
+    input.agent_type = Some("roz:roz".to_string());
+    input.agent_id = Some("agent-abc-123".to_string());
+    input.last_assistant_message = Some("Review complete.".to_string());
 
     let output = handle_subagent_stop(&input, &store);
     assert!(
@@ -161,12 +166,13 @@ fn subagent_stop_validates_timestamp() {
 }
 
 #[test]
-fn subagent_stop_rejects_pre_existing_decision() {
+fn subagent_stop_rejects_stale_decision() {
     let store = MemoryBackend::new();
     let session_id = "subagent-test-reject";
 
-    // Create session with a decision from BEFORE the subagent started
+    // Create session with a decision from BEFORE the review cycle
     let old_decision_time = Utc::now() - Duration::hours(2);
+    let block_time = Utc::now() - Duration::minutes(5);
     let mut state = SessionState::new(session_id);
     state.review.enabled = true;
     state.review.decision = Decision::Complete {
@@ -174,16 +180,17 @@ fn subagent_stop_rejects_pre_existing_decision() {
         second_opinions: None,
     };
     state.updated_at = old_decision_time;
+    // Stop hook blocked 5 min ago (after the old decision)
+    state.review.attempts.push(ReviewAttempt {
+        timestamp: block_time,
+        template_id: "default".to_string(),
+        outcome: AttemptOutcome::Pending,
+    });
     store.put_session(&state).unwrap();
 
-    // Subagent starts now
-    let subagent_started = Utc::now();
-
-    // Subagent stop should reject because decision is too old
-    let mut input = make_input("main-session");
-    input.subagent_type = Some("roz:roz".to_string());
-    input.subagent_prompt = Some(format!("SESSION_ID={session_id}\n\n## Summary"));
-    input.subagent_started_at = Some(subagent_started);
+    let mut input = make_input(session_id);
+    input.agent_type = Some("roz:roz".to_string());
+    input.agent_id = Some("agent-abc".to_string());
 
     let output = handle_subagent_stop(&input, &store);
     assert!(matches!(output.decision, Some(HookDecision::Block)));
@@ -192,53 +199,73 @@ fn subagent_stop_rejects_pre_existing_decision() {
             .reason
             .as_ref()
             .unwrap()
-            .contains("before roz started")
+            .contains("before the current review cycle")
     );
 }
 
 #[test]
-fn subagent_stop_rejects_decision_after_end() {
+fn subagent_stop_rejects_future_decision() {
     let store = MemoryBackend::new();
-    let session_id = "subagent-test-after";
+    let session_id = "subagent-test-future";
 
-    // Subagent started 10 minutes ago
-    let subagent_started = Utc::now() - Duration::minutes(10);
-    // Subagent ended 9 minutes ago (ran for 1 minute)
-    // Note: We can't use this directly since the hook calculates subagent_ended internally
-    let _subagent_ended_approx = Utc::now() - Duration::minutes(9);
-
-    // Create session with a decision from AFTER the subagent ended (beyond 5s buffer)
-    // Decision timestamp is "now" which is 9 minutes after subagent ended
+    // Decision timestamp is far in the future (beyond 5s buffer)
     let mut state = SessionState::new(session_id);
     state.review.enabled = true;
     state.review.decision = Decision::Complete {
-        summary: "Late decision".to_string(),
+        summary: "Future decision".to_string(),
         second_opinions: None,
     };
-    state.updated_at = Utc::now(); // Decision made "now", well after subagent ended
+    state.updated_at = Utc::now() + Duration::hours(1); // 1 hour in future
     store.put_session(&state).unwrap();
 
-    // Subagent stop should reject because decision is after end + buffer
-    let mut input = make_input("main-session");
-    input.subagent_type = Some("roz:roz".to_string());
-    input.subagent_prompt = Some(format!("SESSION_ID={session_id}\n\n## Summary"));
-    input.subagent_started_at = Some(subagent_started);
-    // Note: The hook uses Utc::now() as subagent_ended, so we can't directly test
-    // the "after end" case without mocking time. However, we can verify the logic
-    // exists by checking the code path. For a true test, we'd need time mocking.
-    // This test documents the expected behavior even if it can't trigger the edge case
-    // in real time.
+    let mut input = make_input(session_id);
+    input.agent_type = Some("roz:roz".to_string());
+    input.agent_id = Some("agent-abc".to_string());
 
-    // Since the decision was just made (updated_at = now), and the hook also uses
-    // Utc::now() as subagent_ended, the decision will be within the buffer.
-    // To properly test this, we'd need to mock time. For now, this test verifies
-    // the happy path still works and documents the expected behavior.
     let output = handle_subagent_stop(&input, &store);
-    // This should approve because decision_time <= subagent_ended + 5s buffer
-    // (both are approximately Utc::now())
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
+    assert!(output.reason.as_ref().unwrap().contains("in the future"));
+}
+
+#[test]
+fn subagent_stop_non_roz_agent_approves() {
+    let store = MemoryBackend::new();
+
+    let mut input = make_input("some-session");
+    input.agent_type = Some("other:agent".to_string());
+
+    let output = handle_subagent_stop(&input, &store);
     assert!(
         output.decision.is_none(),
-        "expected approve (decision=None)"
+        "non-roz agents should be approved"
+    );
+}
+
+#[test]
+fn subagent_stop_gate_flow_validates_review_started() {
+    let store = MemoryBackend::new();
+    let session_id = "subagent-gate-flow";
+
+    // Gate flow: review_started_at is set, but no ReviewAttempts (no stop hook block)
+    let review_start = Utc::now() - Duration::minutes(3);
+    let mut state = SessionState::new(session_id);
+    state.review.enabled = true;
+    state.review.review_started_at = Some(review_start);
+    state.review.decision = Decision::Complete {
+        summary: "Approved via gate".to_string(),
+        second_opinions: None,
+    };
+    state.updated_at = Utc::now(); // Decision after review_started_at
+    store.put_session(&state).unwrap();
+
+    let mut input = make_input(session_id);
+    input.agent_type = Some("roz:roz".to_string());
+    input.agent_id = Some("agent-abc".to_string());
+
+    let output = handle_subagent_stop(&input, &store);
+    assert!(
+        output.decision.is_none(),
+        "expected approve for gate flow with valid timing"
     );
 }
 
@@ -305,9 +332,11 @@ fn make_gate_input(session_id: &str, tool_name: &str) -> HookInput {
         tool_input: Some(json!({"arg": "value"})),
         tool_response: None,
         source: None,
-        subagent_type: None,
-        subagent_prompt: None,
-        subagent_started_at: None,
+        agent_type: None,
+        agent_id: None,
+        agent_transcript_path: None,
+        last_assistant_message: None,
+        stop_hook_active: None,
     }
 }
 

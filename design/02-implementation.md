@@ -191,14 +191,13 @@ The stop hook implements the core blocking logic:
 
 Validates that:
 
-1. Subagent type is `roz:roz`
-2. SESSION_ID was extracted from prompt
-3. Decision was posted during roz execution (timestamp validation)
+1. Agent type is `roz:roz` (via `agent_type` field from Claude Code)
+2. Session is looked up via `input.session_id` (parent session context)
+3. Decision was posted during the current review cycle (timestamp validation)
 
-Session ID extraction: `src/core/hooks.rs:330-349`
-
-Timestamp validation prevents the main agent from self-approving by running
-`roz decide` directly.
+Timestamp validation uses the most recent `ReviewAttempt` timestamp (or
+`review_started_at` for gates) as the lower bound, and `now + 5s` as the
+upper bound. This prevents stale or pre-existing decisions from being accepted.
 
 ### 4.5 PreToolUse Hook (Gate)
 

@@ -87,9 +87,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         }
     }
 

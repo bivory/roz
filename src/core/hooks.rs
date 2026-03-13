@@ -11,7 +11,6 @@ use crate::storage::MessageStore;
 use crate::template::{load_template, select_template};
 use chrono::{Duration, Utc};
 use glob::Pattern;
-use regex::Regex;
 use serde_json::{Value, json};
 use std::process::Command;
 use uuid::Uuid;
@@ -306,30 +305,19 @@ pub fn handle_stop_with_config(
 /// Handle the subagent-stop hook.
 ///
 /// Validates that roz:roz posted a decision during its execution.
+/// Uses the parent session's `session_id` from the hook input directly,
+/// since `SubagentStop` fires in the context of the parent session.
 pub fn handle_subagent_stop(input: &HookInput, store: &dyn MessageStore) -> HookOutput {
     // Only validate roz:roz subagent
-    let subagent_type = match &input.subagent_type {
-        Some(t) if t == "roz:roz" => t,
+    match &input.agent_type {
+        Some(t) if t == "roz:roz" => {}
         _ => return HookOutput::approve(),
-    };
+    }
 
-    // Extract session ID from roz's prompt
-    let Some(session_id) = extract_session_id(input.subagent_prompt.as_deref()) else {
-        return HookOutput::block(
-            "roz:roz completed but SESSION_ID not found in prompt. \
-             The prompt must include SESSION_ID=<id>.",
-        );
-    };
-
-    // Get subagent execution window from hook input
-    // Fallback: assume subagent started 1 hour ago if not provided
-    let subagent_started = input
-        .subagent_started_at
-        .unwrap_or_else(|| Utc::now() - Duration::hours(1));
-    let subagent_ended = Utc::now(); // Hook runs immediately after subagent
+    let session_id = &input.session_id;
 
     // Check if roz recorded a decision
-    let state = match store.get_session(&session_id) {
+    let state = match store.get_session(session_id) {
         Ok(Some(s)) => s,
         Ok(None) => {
             eprintln!("roz: warning: session {session_id} not found");
@@ -343,51 +331,49 @@ pub fn handle_subagent_stop(input: &HookInput, store: &dyn MessageStore) -> Hook
 
     match &state.review.decision {
         Decision::Pending => HookOutput::block(&format!(
-            "roz:roz ({subagent_type}) completed but did not record a decision.\n\n\
+            "roz:roz completed but did not record a decision.\n\n\
              Run: roz decide {session_id} COMPLETE \"summary\"\n\
               or: roz decide {session_id} ISSUES \"summary\" --message \"what to fix\""
         )),
         Decision::Complete { .. } | Decision::Issues { .. } => {
-            // Verify decision was posted during subagent execution
-            // This prevents main agent from running `roz decide` directly
+            // Verify decision was posted during the current review cycle.
+            // Lower bound: most recent block attempt (stop hook) or review start (gate).
+            // Upper bound: now + 5s clock-skew buffer.
             let decision_time = state.updated_at;
 
-            if decision_time < subagent_started {
-                return HookOutput::block(&format!(
-                    "Decision timestamp ({}) is before roz started ({}). \
-                     Decision must be posted by roz:roz during its execution.",
-                    decision_time.format("%Y-%m-%dT%H:%M:%SZ"),
-                    subagent_started.format("%Y-%m-%dT%H:%M:%SZ")
-                ));
+            let lower_bound = state
+                .review
+                .attempts
+                .last()
+                .map(|a| a.timestamp)
+                .or(state.review.review_started_at);
+
+            if let Some(lower) = lower_bound {
+                if decision_time < lower {
+                    return HookOutput::block(&format!(
+                        "Decision timestamp ({}) is before the current review cycle ({}). \
+                         Decision must be posted by roz:roz during its execution.",
+                        decision_time.format("%Y-%m-%dT%H:%M:%SZ"),
+                        lower.format("%Y-%m-%dT%H:%M:%SZ")
+                    ));
+                }
             }
 
-            // Allow small buffer after subagent ends (clock skew tolerance)
+            // Upper bound: now + clock skew buffer
             let buffer = Duration::seconds(5);
-            if decision_time > subagent_ended + buffer {
+            let now = Utc::now();
+            if decision_time > now + buffer {
                 return HookOutput::block(&format!(
-                    "Decision timestamp ({}) is after roz ended ({}). \
+                    "Decision timestamp ({}) is in the future (now: {}). \
                      Decision must be posted by roz:roz during its execution.",
                     decision_time.format("%Y-%m-%dT%H:%M:%SZ"),
-                    subagent_ended.format("%Y-%m-%dT%H:%M:%SZ")
+                    now.format("%Y-%m-%dT%H:%M:%SZ")
                 ));
             }
 
             HookOutput::approve()
         }
     }
-}
-
-/// Extract `SESSION_ID` from a subagent prompt.
-///
-/// Looks for patterns like `SESSION_ID=abc123` or `SESSION_ID: abc123`.
-fn extract_session_id(prompt: Option<&str>) -> Option<String> {
-    let prompt = prompt?;
-
-    // Try SESSION_ID=xxx pattern first
-    let re = Regex::new(r"SESSION_ID[=:]\s*([a-zA-Z0-9_-]+)").ok()?;
-    re.captures(prompt)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
 }
 
 // ============================================================================
@@ -817,44 +803,6 @@ mod tests {
     use crate::storage::MemoryBackend;
     use std::path::PathBuf;
 
-    #[test]
-    fn extract_session_id_equals() {
-        let prompt = "SESSION_ID=test-123\n\n## Summary\nDid stuff";
-        assert_eq!(
-            extract_session_id(Some(prompt)),
-            Some("test-123".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_session_id_colon() {
-        let prompt = "SESSION_ID: test-456\n\n## Summary";
-        assert_eq!(
-            extract_session_id(Some(prompt)),
-            Some("test-456".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_session_id_with_spaces() {
-        let prompt = "SESSION_ID= abc-789 \n\nContent";
-        assert_eq!(
-            extract_session_id(Some(prompt)),
-            Some("abc-789".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_session_id_missing() {
-        let prompt = "No session ID here";
-        assert_eq!(extract_session_id(Some(prompt)), None);
-    }
-
-    #[test]
-    fn extract_session_id_none() {
-        assert_eq!(extract_session_id(None), None);
-    }
-
     // User prompt hook tests
 
     #[test]
@@ -868,9 +816,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_user_prompt(&input, &store);
@@ -894,9 +844,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_user_prompt(&input, &store);
@@ -921,9 +873,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
         handle_user_prompt(&input1, &store);
 
@@ -936,9 +890,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
         handle_user_prompt(&input2, &store);
 
@@ -961,9 +917,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -988,9 +946,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -1026,9 +986,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -1056,9 +1018,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_stop(&input, &store);
@@ -1082,9 +1046,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: Some("other:agent".to_string()),
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: Some("other:agent".to_string()),
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1092,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_stop_missing_session_id_blocks() {
+    fn subagent_stop_no_agent_type_approves() {
         let store = MemoryBackend::new();
         let input = HookInput {
             session_id: "test-123".to_string(),
@@ -1102,40 +1068,65 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: Some("roz:roz".to_string()),
-            subagent_prompt: Some("No session ID here".to_string()),
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
-        assert!(matches!(
-            output.decision,
-            Some(crate::hooks::HookDecision::Block)
-        ));
-        assert!(output.reason.unwrap().contains("SESSION_ID not found"));
+        assert!(output.decision.is_none());
     }
 
     #[test]
-    fn subagent_stop_decision_pending_blocks() {
+    fn subagent_stop_session_not_found_approves() {
         let store = MemoryBackend::new();
-
-        // Create session with pending decision
-        let mut state = SessionState::new("test-pending");
-        state.review.enabled = true;
-        state.review.decision = Decision::Pending;
-        store.put_session(&state).unwrap();
-
+        // Session "nonexistent" doesn't exist in store
         let input = HookInput {
-            session_id: "main-session".to_string(),
+            session_id: "nonexistent".to_string(),
             cwd: "/tmp".into(),
             prompt: None,
             tool_name: None,
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: Some("roz:roz".to_string()),
-            subagent_prompt: Some("SESSION_ID=test-pending\n\n## Summary".to_string()),
-            subagent_started_at: Some(Utc::now() - Duration::minutes(5)),
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+        };
+
+        // Fail open when session not found
+        let output = handle_subagent_stop(&input, &store);
+        assert!(output.decision.is_none());
+    }
+
+    #[test]
+    fn subagent_stop_decision_pending_blocks() {
+        let store = MemoryBackend::new();
+        let session_id = "test-pending";
+
+        // Create session with pending decision
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.decision = Decision::Pending;
+        store.put_session(&state).unwrap();
+
+        let input = HookInput {
+            session_id: session_id.to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1149,10 +1140,11 @@ mod tests {
     #[test]
     fn subagent_stop_valid_decision_approves() {
         let store = MemoryBackend::new();
+        let session_id = "test-valid";
 
         // Create session with valid decision timestamp
         let now = Utc::now();
-        let mut state = SessionState::new("test-valid");
+        let mut state = SessionState::new(session_id);
         state.review.enabled = true;
         state.review.decision = Decision::Complete {
             summary: "All good".to_string(),
@@ -1162,16 +1154,18 @@ mod tests {
         store.put_session(&state).unwrap();
 
         let input = HookInput {
-            session_id: "main-session".to_string(),
+            session_id: session_id.to_string(),
             cwd: "/tmp".into(),
             prompt: None,
             tool_name: None,
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: Some("roz:roz".to_string()),
-            subagent_prompt: Some("SESSION_ID=test-valid\n\n## Summary".to_string()),
-            subagent_started_at: Some(now - Duration::minutes(5)),
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1179,31 +1173,41 @@ mod tests {
     }
 
     #[test]
-    fn subagent_stop_decision_before_start_blocks() {
+    fn subagent_stop_stale_decision_blocks() {
         let store = MemoryBackend::new();
+        let session_id = "test-stale";
 
-        // Create session with decision before subagent started
+        // Create session with a stale decision that predates the review cycle
         let now = Utc::now();
-        let mut state = SessionState::new("test-before");
+        let mut state = SessionState::new(session_id);
         state.review.enabled = true;
         state.review.decision = Decision::Complete {
-            summary: "All good".to_string(),
+            summary: "Old decision".to_string(),
             second_opinions: None,
         };
         state.updated_at = now - Duration::hours(2); // Decision made 2 hours ago
+
+        // The stop hook blocked 5 minutes ago (creating a ReviewAttempt)
+        state.review.attempts.push(ReviewAttempt {
+            timestamp: now - Duration::minutes(5),
+            template_id: "default".to_string(),
+            outcome: AttemptOutcome::Pending,
+        });
         store.put_session(&state).unwrap();
 
         let input = HookInput {
-            session_id: "main-session".to_string(),
+            session_id: session_id.to_string(),
             cwd: "/tmp".into(),
             prompt: None,
             tool_name: None,
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: Some("roz:roz".to_string()),
-            subagent_prompt: Some("SESSION_ID=test-before\n\n## Summary".to_string()),
-            subagent_started_at: Some(now - Duration::minutes(5)), // Subagent started 5 min ago
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_subagent_stop(&input, &store);
@@ -1211,7 +1215,179 @@ mod tests {
             output.decision,
             Some(crate::hooks::HookDecision::Block)
         ));
-        assert!(output.reason.unwrap().contains("before roz started"));
+        assert!(
+            output
+                .reason
+                .unwrap()
+                .contains("before the current review cycle")
+        );
+    }
+
+    #[test]
+    fn subagent_stop_decision_after_block_approves() {
+        let store = MemoryBackend::new();
+        let session_id = "test-after-block";
+
+        // Create session where decision was posted after the review cycle started
+        let now = Utc::now();
+        let block_time = now - Duration::minutes(5);
+        let decide_time = now - Duration::minutes(1);
+
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.decision = Decision::Complete {
+            summary: "All good".to_string(),
+            second_opinions: None,
+        };
+        state.updated_at = decide_time; // Decision posted after block
+
+        // Stop hook blocked at block_time
+        state.review.attempts.push(ReviewAttempt {
+            timestamp: block_time,
+            template_id: "default".to_string(),
+            outcome: AttemptOutcome::Pending,
+        });
+        store.put_session(&state).unwrap();
+
+        let input = HookInput {
+            session_id: session_id.to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: Some("Review complete.".to_string()),
+            stop_hook_active: None,
+        };
+
+        let output = handle_subagent_stop(&input, &store);
+        assert!(output.decision.is_none());
+    }
+
+    #[test]
+    fn subagent_stop_gate_review_started_as_lower_bound() {
+        let store = MemoryBackend::new();
+        let session_id = "test-gate-lower";
+
+        // Gate flow: review_started_at is set but no ReviewAttempts
+        let now = Utc::now();
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.review_started_at = Some(now - Duration::minutes(3));
+        state.review.decision = Decision::Complete {
+            summary: "All good".to_string(),
+            second_opinions: None,
+        };
+        // Decision posted BEFORE review started → should be rejected
+        state.updated_at = now - Duration::minutes(10);
+        store.put_session(&state).unwrap();
+
+        let input = HookInput {
+            session_id: session_id.to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+        };
+
+        let output = handle_subagent_stop(&input, &store);
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
+        assert!(
+            output
+                .reason
+                .unwrap()
+                .contains("before the current review cycle")
+        );
+    }
+
+    #[test]
+    fn subagent_stop_future_decision_blocks() {
+        let store = MemoryBackend::new();
+        let session_id = "test-future";
+
+        // Decision timestamp is far in the future (suspicious)
+        let now = Utc::now();
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.decision = Decision::Complete {
+            summary: "Future decision".to_string(),
+            second_opinions: None,
+        };
+        state.updated_at = now + Duration::hours(1); // 1 hour in the future
+        store.put_session(&state).unwrap();
+
+        let input = HookInput {
+            session_id: session_id.to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+        };
+
+        let output = handle_subagent_stop(&input, &store);
+        assert!(matches!(
+            output.decision,
+            Some(crate::hooks::HookDecision::Block)
+        ));
+        assert!(output.reason.unwrap().contains("in the future"));
+    }
+
+    #[test]
+    fn subagent_stop_no_lower_bound_approves_valid_decision() {
+        let store = MemoryBackend::new();
+        let session_id = "test-no-bound";
+
+        // Session has a decision but no review attempts and no review_started_at
+        // (edge case: decision posted without going through normal flow)
+        let now = Utc::now();
+        let mut state = SessionState::new(session_id);
+        state.review.enabled = true;
+        state.review.decision = Decision::Complete {
+            summary: "All good".to_string(),
+            second_opinions: None,
+        };
+        state.updated_at = now;
+        store.put_session(&state).unwrap();
+
+        let input = HookInput {
+            session_id: session_id.to_string(),
+            cwd: "/tmp".into(),
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            agent_type: Some("roz:roz".to_string()),
+            agent_id: Some("agent-abc".to_string()),
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+        };
+
+        // Without a lower bound, approves if decision exists and isn't in the future
+        let output = handle_subagent_stop(&input, &store);
+        assert!(output.decision.is_none());
     }
 
     // Session start hook tests
@@ -1227,9 +1403,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: Some("startup".to_string()),
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_session_start(&input, &store);
@@ -1259,9 +1437,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: Some("resume".to_string()),
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_session_start(&input, &store);
@@ -1294,9 +1474,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let config = Config::default(); // max_blocks = 3
@@ -1330,9 +1512,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let config = Config::default();
@@ -1366,9 +1550,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_stop_with_config(&input, &store, &config);
@@ -1405,9 +1591,11 @@ mod tests {
             tool_input: Some(json!({"issue_id": "123"})),
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1430,9 +1618,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1455,9 +1645,11 @@ mod tests {
             tool_input: Some(json!({"issue_id": "123"})),
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1501,9 +1693,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1535,9 +1729,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1560,9 +1756,11 @@ mod tests {
             tool_input: Some(json!({"command": "gh issue close 123"})),
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -1586,9 +1784,11 @@ mod tests {
             tool_input: Some(json!({"command": "echo 'y' | gh issue close 123"})),
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         let output = handle_pre_tool_use(&input, &config, &store);
@@ -2070,9 +2270,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2098,9 +2300,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2127,9 +2331,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);
@@ -2145,9 +2351,11 @@ mod tests {
             tool_input: None,
             tool_response: None,
             source: None,
-            subagent_type: None,
-            subagent_prompt: None,
-            subagent_started_at: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
         };
 
         handle_user_prompt_with_config(&input, &store, &config);

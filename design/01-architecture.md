@@ -128,8 +128,10 @@ original size recorded.
 - `source`: Session source - startup, resume, clear, or compact (for
   session-start hook)
 - `tool_name`, `tool_input`: Tool details (for pre-tool-use hook)
-- `subagent_type`, `subagent_prompt`, `subagent_started_at`: Subagent details
+- `agent_type`, `agent_id`, `agent_transcript_path`: Subagent details
   (for subagent-stop hook)
+- `last_assistant_message`: Last message from subagent (for stop/subagent-stop)
+- `stop_hook_active`: Whether a stop hook is already active
 
 **Output for PreToolUse** (to Claude Code):
 
@@ -241,9 +243,11 @@ patterns, commands are normalized to handle common shell patterns:
 This ensures patterns like `Bash:gh issue close*` match regardless of how the
 command is invoked.
 
-**Timestamp Validation Buffer**: The subagent-stop hook allows a 5-second
-buffer after roz execution ends to account for clock skew when validating
-decision timestamps.
+**Timestamp Validation**: The subagent-stop hook validates that the decision
+was posted during the current review cycle. Lower bound: last `ReviewAttempt`
+timestamp (stop hook block) or `review_started_at` (gate block). Upper bound:
+`now + 5s` clock-skew buffer. Uses `input.session_id` directly since
+`SubagentStop` fires in the parent session's context.
 
 ## 5. Sequence Diagrams
 
