@@ -1,6 +1,6 @@
 //! Hook handler implementations.
 
-use crate::config::{ApprovalScope, Config, GatesConfig};
+use crate::config::{ApprovalScope, CircuitBreakerConfig, Config, GatesConfig};
 use crate::core::circuit_breaker;
 use crate::core::state::{
     AttemptOutcome, Decision, EventType, GateTrigger, ReviewAttempt, SessionState, TraceEvent,
@@ -251,13 +251,27 @@ pub fn handle_stop_with_config(
 
     let now = Utc::now();
 
-    // Log the stop hook call (include stop_hook_active for debugging)
+    // Defense-in-depth: when stop_hook_active is true, Claude Code is telling us
+    // we're in a block-continue loop. Reduce effective max_blocks by 1 (floor 1)
+    // to trip the circuit breaker one block sooner.
+    let stop_hook_active = input.stop_hook_active.unwrap_or(false);
+    let effective_cb = if stop_hook_active {
+        CircuitBreakerConfig {
+            max_blocks: config.circuit_breaker.max_blocks.saturating_sub(1).max(1),
+            ..config.circuit_breaker.clone()
+        }
+    } else {
+        config.circuit_breaker.clone()
+    };
+
+    // Log the stop hook call (include stop_hook_active and effective_max_blocks)
     state.trace.push(TraceEvent {
         id: generate_id(),
         timestamp: now,
         event_type: EventType::StopHookCalled,
         payload: json!({
-            "stop_hook_active": input.stop_hook_active.unwrap_or(false),
+            "stop_hook_active": stop_hook_active,
+            "effective_max_blocks": effective_cb.max_blocks,
         }),
     });
 
@@ -270,11 +284,10 @@ pub fn handle_stop_with_config(
 
     // Check circuit breaker BEFORE incrementing block count
     // If previously tripped but cooldown elapsed, reset the circuit breaker
-    if state.review.circuit_breaker_tripped
-        && !circuit_breaker::should_trip(&state, &config.circuit_breaker)
+    if state.review.circuit_breaker_tripped && !circuit_breaker::should_trip(&state, &effective_cb)
     {
         circuit_breaker::reset(&mut state);
-    } else if circuit_breaker::should_trip(&state, &config.circuit_breaker) {
+    } else if circuit_breaker::should_trip(&state, &effective_cb) {
         circuit_breaker::trip(&mut state);
         state.updated_at = now;
         let _ = store.put_session(&state);
@@ -288,7 +301,7 @@ pub fn handle_stop_with_config(
             state.review.block_count += 1;
 
             // Check circuit breaker AFTER incrementing
-            if circuit_breaker::should_trip(&state, &config.circuit_breaker) {
+            if circuit_breaker::should_trip(&state, &effective_cb) {
                 circuit_breaker::trip(&mut state);
                 state.updated_at = now;
                 let _ = store.put_session(&state);
@@ -318,7 +331,7 @@ pub fn handle_stop_with_config(
             state.review.block_count += 1;
 
             // Check circuit breaker AFTER incrementing
-            if circuit_breaker::should_trip(&state, &config.circuit_breaker) {
+            if circuit_breaker::should_trip(&state, &effective_cb) {
                 circuit_breaker::trip(&mut state);
                 state.updated_at = now;
                 let _ = store.put_session(&state);
@@ -368,6 +381,10 @@ pub fn handle_subagent_stop(input: &HookInput, store: &dyn MessageStore) -> Hook
             return HookOutput::approve(); // Fail open
         }
     };
+
+    if input.stop_hook_active.unwrap_or(false) {
+        eprintln!("roz: info: subagent-stop for {session_id} with stop_hook_active=true");
+    }
 
     match &state.review.decision {
         Decision::Pending => HookOutput::block(&format!(
@@ -3139,5 +3156,311 @@ mod tests {
         // No session exists - should fail open
         let output = handle_session_end(&input, &store);
         assert!(output.decision.is_none(), "fail-open on missing session");
+    }
+
+    // stop_hook_active defense-in-depth tests
+
+    #[test]
+    fn stop_hook_active_true_accelerates_circuit_breaker() {
+        let store = MemoryBackend::new();
+
+        // Create session with review enabled and block_count=1
+        let mut state = SessionState::new("sha-accel");
+        state.review.enabled = true;
+        state.review.block_count = 1;
+        store.put_session(&state).unwrap();
+
+        // Config with max_blocks=3; stop_hook_active=true → effective=2
+        // After increment block_count becomes 2 >= 2 → trips
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 3,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-accel".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(true),
+            reason: None,
+        };
+
+        let output = handle_stop_with_config(&input, &store, &config);
+
+        // Should approve because circuit breaker tripped early
+        assert!(output.decision.is_none(), "expected approve (CB tripped)");
+
+        let state = store.get_session("sha-accel").unwrap().unwrap();
+        assert!(state.review.circuit_breaker_tripped);
+    }
+
+    #[test]
+    fn stop_hook_active_false_normal_circuit_breaker() {
+        let store = MemoryBackend::new();
+
+        // Same setup: block_count=1, max_blocks=3
+        let mut state = SessionState::new("sha-normal");
+        state.review.enabled = true;
+        state.review.block_count = 1;
+        store.put_session(&state).unwrap();
+
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 3,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-normal".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(false),
+            reason: None,
+        };
+
+        let output = handle_stop_with_config(&input, &store, &config);
+
+        // Should block because effective_max_blocks=3, block_count=2 < 3
+        assert!(
+            matches!(output.decision, Some(crate::hooks::HookDecision::Block)),
+            "expected block (CB not tripped)"
+        );
+
+        let state = store.get_session("sha-normal").unwrap().unwrap();
+        assert!(!state.review.circuit_breaker_tripped);
+        assert_eq!(state.review.block_count, 2);
+    }
+
+    #[test]
+    fn stop_hook_active_none_treated_as_false() {
+        let store = MemoryBackend::new();
+
+        // Same setup: block_count=1, max_blocks=3
+        let mut state = SessionState::new("sha-none");
+        state.review.enabled = true;
+        state.review.block_count = 1;
+        store.put_session(&state).unwrap();
+
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 3,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-none".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: None,
+            reason: None,
+        };
+
+        let output = handle_stop_with_config(&input, &store, &config);
+
+        // Should block same as active=false
+        assert!(
+            matches!(output.decision, Some(crate::hooks::HookDecision::Block)),
+            "expected block (None treated as false)"
+        );
+
+        let state = store.get_session("sha-none").unwrap().unwrap();
+        assert!(!state.review.circuit_breaker_tripped);
+        assert_eq!(state.review.block_count, 2);
+    }
+
+    #[test]
+    fn stop_hook_active_true_with_max_blocks_one() {
+        let store = MemoryBackend::new();
+
+        // max_blocks=1, block_count=0, active=true → floor(1)
+        // After increment block_count=1 >= 1 → trips immediately
+        let mut state = SessionState::new("sha-floor");
+        state.review.enabled = true;
+        state.review.block_count = 0;
+        store.put_session(&state).unwrap();
+
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 1,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-floor".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(true),
+            reason: None,
+        };
+
+        let output = handle_stop_with_config(&input, &store, &config);
+
+        // Should approve because circuit breaker trips (floor of 1)
+        assert!(
+            output.decision.is_none(),
+            "expected approve (CB tripped at floor)"
+        );
+
+        let state = store.get_session("sha-floor").unwrap().unwrap();
+        assert!(state.review.circuit_breaker_tripped);
+    }
+
+    #[test]
+    fn stop_hook_active_trace_includes_effective_max_blocks() {
+        let store = MemoryBackend::new();
+
+        let mut state = SessionState::new("sha-trace");
+        state.review.enabled = true;
+        store.put_session(&state).unwrap();
+
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 5,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-trace".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(true),
+            reason: None,
+        };
+
+        handle_stop_with_config(&input, &store, &config);
+
+        let state = store.get_session("sha-trace").unwrap().unwrap();
+        let stop_event = state
+            .trace
+            .iter()
+            .find(|e| e.event_type == EventType::StopHookCalled)
+            .expect("StopHookCalled trace event should exist");
+        assert_eq!(stop_event.payload["stop_hook_active"], true);
+        assert_eq!(stop_event.payload["effective_max_blocks"], 4);
+    }
+
+    #[test]
+    fn stop_hook_active_true_on_issues_accelerates_circuit_breaker() {
+        let store = MemoryBackend::new();
+
+        // Create session with Issues decision and block_count=1, max_blocks=3
+        let mut state = SessionState::new("sha-issues");
+        state.review.enabled = true;
+        state.review.block_count = 1;
+        state.review.decision = Decision::Issues {
+            summary: "Fix tests".to_string(),
+            message_to_agent: Some("Add more tests".to_string()),
+        };
+        store.put_session(&state).unwrap();
+
+        let config = Config {
+            circuit_breaker: crate::config::CircuitBreakerConfig {
+                max_blocks: 3,
+                cooldown_seconds: 300,
+            },
+            ..Config::default()
+        };
+
+        let input = HookInput {
+            session_id: "sha-issues".to_string(),
+            cwd: "/tmp".into(),
+            transcript_path: None,
+            permission_mode: None,
+            hook_event_name: None,
+            prompt: None,
+            tool_name: None,
+            tool_input: None,
+            tool_response: None,
+            source: None,
+            model: None,
+            agent_type: None,
+            agent_id: None,
+            agent_transcript_path: None,
+            last_assistant_message: None,
+            stop_hook_active: Some(true),
+            reason: None,
+        };
+
+        let output = handle_stop_with_config(&input, &store, &config);
+
+        // effective_max_blocks=2, after increment block_count=2 >= 2 → trips
+        assert!(
+            output.decision.is_none(),
+            "expected approve (CB tripped on Issues path)"
+        );
+
+        let state = store.get_session("sha-issues").unwrap().unwrap();
+        assert!(state.review.circuit_breaker_tripped);
     }
 }

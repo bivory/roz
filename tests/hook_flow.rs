@@ -5,7 +5,8 @@ use roz::core::state::{
     AttemptOutcome, Decision, DecisionRecord, EventType, ReviewAttempt, SessionState,
 };
 use roz::core::{
-    handle_session_end, handle_session_start, handle_stop, handle_subagent_stop, handle_user_prompt,
+    handle_session_end, handle_session_start, handle_stop, handle_stop_with_config,
+    handle_subagent_stop, handle_user_prompt,
 };
 use roz::hooks::{HookDecision, HookInput};
 use roz::storage::{MemoryBackend, MessageStore};
@@ -748,4 +749,91 @@ fn session_end_preserves_review_state() {
     let state = store.get_session(session_id).unwrap().unwrap();
     assert!(state.review.enabled);
     assert_eq!(state.review.user_prompts.len(), 1);
+}
+
+// ============================================================================
+// stop_hook_active Defense-in-Depth Integration Tests
+// ============================================================================
+
+#[test]
+fn stop_hook_active_loop_trips_circuit_breaker_early() {
+    let store = MemoryBackend::new();
+    let session_id = "sha-loop-trip";
+
+    // Step 1: Enable review
+    let mut input = make_input(session_id);
+    input.prompt = Some("#roz test stop_hook_active loop".to_string());
+    handle_user_prompt(&input, &store);
+
+    // Step 2: First stop blocks normally (stop_hook_active=false)
+    let config = Config {
+        circuit_breaker: roz::config::CircuitBreakerConfig {
+            max_blocks: 3,
+            cooldown_seconds: 300,
+        },
+        ..Config::default()
+    };
+    let input = make_input(session_id);
+    let output = handle_stop_with_config(&input, &store, &config);
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
+
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert_eq!(state.review.block_count, 1);
+
+    // Step 3: Second stop blocks normally (stop_hook_active=false)
+    let input = make_input(session_id);
+    let output = handle_stop_with_config(&input, &store, &config);
+    assert!(matches!(output.decision, Some(HookDecision::Block)));
+
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert_eq!(state.review.block_count, 2);
+
+    // Step 4: Third stop with stop_hook_active=true → effective_max_blocks=2
+    // block_count is already 2 >= 2 → trips BEFORE incrementing
+    let mut input = make_input(session_id);
+    input.stop_hook_active = Some(true);
+    let output = handle_stop_with_config(&input, &store, &config);
+
+    // Should approve because circuit breaker tripped early
+    assert!(
+        output.decision.is_none(),
+        "expected approve (CB tripped early due to stop_hook_active)"
+    );
+
+    let state = store.get_session(session_id).unwrap().unwrap();
+    assert!(state.review.circuit_breaker_tripped);
+}
+
+#[test]
+fn stop_hook_active_does_not_affect_subagent_stop() {
+    let store = MemoryBackend::new();
+    let session_id = "sha-subagent-noop";
+
+    // Create session with a valid decision posted during review cycle
+    let block_time = Utc::now() - Duration::minutes(2);
+    let mut state = SessionState::new(session_id);
+    state.review.enabled = true;
+    state.review.attempts.push(ReviewAttempt {
+        timestamp: block_time,
+        template_id: "default".to_string(),
+        outcome: AttemptOutcome::Pending,
+    });
+    state.review.decision = Decision::Complete {
+        summary: "All good".to_string(),
+        second_opinions: None,
+    };
+    state.updated_at = Utc::now(); // Decision after block_time
+    store.put_session(&state).unwrap();
+
+    // Subagent-stop with stop_hook_active=true should still validate normally
+    let mut input = make_input(session_id);
+    input.agent_type = Some("roz:roz".to_string());
+    input.agent_id = Some("agent-sha-test".to_string());
+    input.stop_hook_active = Some(true);
+
+    let output = handle_subagent_stop(&input, &store);
+    assert!(
+        output.decision.is_none(),
+        "subagent-stop should approve normally regardless of stop_hook_active"
+    );
 }

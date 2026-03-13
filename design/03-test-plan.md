@@ -53,6 +53,7 @@ echo '{"session_id":"test"}' | roz hook stop
 |----------|-------|----------|
 | Hook I/O parsing | Valid JSON, malformed JSON, missing required fields, extra fields | High |
 | State transitions | Idle->Pending, Pending->Blocked, Blocked->Approved, circuit breaker | High |
+| `stop_hook_active` defense-in-depth | Accelerated CB trip, normal behavior, None-as-false, floor(1), trace payload, Issues path | High |
 | `#roz` command parsing | `#roz`, `#roz:stop`, `#roz message`, edge cases | High |
 | Decision serialization | Round-trip Complete, Issues, Pending through JSON | Medium |
 | Template loading | File exists, file missing (fallback), invalid template | Medium |
@@ -70,6 +71,7 @@ echo '{"session_id":"test"}' | roz hook stop
 | Session listing | Empty dir, single session, multiple sessions, sort order | Medium |
 | Session cleanup | Age filter, skip active sessions, remove completed | Medium |
 | CLI commands | `roz decide`, `roz context`, `roz debug`, `roz list` | Medium |
+| `stop_hook_active` loop detection | Full flow early CB trip, subagent-stop unaffected | High |
 
 ### Property-Based Tests (Phase 2)
 

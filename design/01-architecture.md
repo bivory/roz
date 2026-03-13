@@ -477,6 +477,24 @@ Prevents infinite blocking loops when something goes wrong.
 3. Tripped breaker forces approve and logs warning
 4. Breaker resets after cooldown or on new session
 
+**Defense-in-depth (`stop_hook_active`):**
+
+When Claude Code sets `stop_hook_active=true` on a stop hook call, it signals
+that the agent is already continuing from a previous stop block (a
+block-continue loop). The stop hook uses this signal to reduce the effective
+`max_blocks` by 1 (with a floor of 1), causing the circuit breaker to trip one
+block sooner and preventing unnecessary round-trips.
+
+| `stop_hook_active` | Effective `max_blocks` |
+|--------------------|----------------------|
+| `None` (legacy)    | `config.max_blocks` (no change) |
+| `false`            | `config.max_blocks` (no change) |
+| `true`             | `max(config.max_blocks - 1, 1)` |
+
+The effective value is logged in the `StopHookCalled` trace event as
+`effective_max_blocks` for debugging. This logic is entirely in the stop hook
+handler — no changes to `circuit_breaker.rs` or config types are needed.
+
 ## 8. Template System
 
 Block messages use external templates for A/B testing.

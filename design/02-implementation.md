@@ -185,6 +185,8 @@ The stop hook implements the core blocking logic:
 - If `Decision::Complete` -> approve
 - If `Decision::Pending` or `Decision::Issues` -> block (spawn roz)
 - Circuit breaker trips after `max_blocks` (default 3)
+- When `stop_hook_active=true`, effective `max_blocks` reduced
+  by 1 (floor 1) for defense-in-depth
 
 ### 4.4 Subagent-Stop Hook
 

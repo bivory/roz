@@ -30,3 +30,4 @@ ignores:
   - "target/**"
   - "memory/**"
   - "node_modules/**"
+  - ".grove/**"
