@@ -4,7 +4,7 @@
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "roz hook session-start",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook session-start",
         "timeout": 5
       }]
     }],
@@ -13,7 +13,7 @@
         "matcher": "mcp__tissue__.*",
         "hooks": [{
           "type": "command",
-          "command": "roz hook pre-tool-use",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook pre-tool-use",
           "timeout": 5
         }]
       },
@@ -21,7 +21,7 @@
         "matcher": "mcp__beads__.*",
         "hooks": [{
           "type": "command",
-          "command": "roz hook pre-tool-use",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook pre-tool-use",
           "timeout": 5
         }]
       },
@@ -29,7 +29,7 @@
         "matcher": "Bash",
         "hooks": [{
           "type": "command",
-          "command": "roz hook pre-tool-use",
+          "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook pre-tool-use",
           "timeout": 5
         }]
       }
@@ -37,7 +37,7 @@
     "Stop": [{
       "hooks": [{
         "type": "command",
-        "command": "roz hook stop",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook stop",
         "timeout": 5
       }]
     }],
@@ -45,14 +45,14 @@
       "matcher": "roz:roz",
       "hooks": [{
         "type": "command",
-        "command": "roz hook subagent-stop",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook subagent-stop",
         "timeout": 5
       }]
     }],
     "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",
-        "command": "roz hook user-prompt",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/roz\" hook user-prompt",
         "timeout": 5
       }]
     }]
