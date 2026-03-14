@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-03-13
+
+### Fixed
+
+- Use PATH-resolved `roz` in hooks instead of `CLAUDE_PLUGIN_ROOT`,
+  fixing "No such file or directory" errors after plugin updates
+
 ## [0.1.6] - 2026-03-13
 
 ### Added
@@ -77,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Review gates for tool patterns
 - Support for Linux and macOS (x86_64 and ARM64)
 
-[Unreleased]: https://github.com/anthropics/roz/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/anthropics/roz/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/anthropics/roz/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/anthropics/roz/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/anthropics/roz/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/anthropics/roz/compare/v0.1.3...v0.1.4
