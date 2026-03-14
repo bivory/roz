@@ -174,17 +174,6 @@ main() {
     cp "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-    # Also install to plugin bin/ directory for CLAUDE_PLUGIN_ROOT resolution
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local plugin_root
-    plugin_root="$(dirname "$script_dir")"
-    local plugin_bin="$plugin_root/bin"
-    mkdir -p "$plugin_bin"
-    cp "$TMP_DIR/$BINARY_NAME" "$plugin_bin/$BINARY_NAME"
-    chmod +x "$plugin_bin/$BINARY_NAME"
-    info "Also installed to $plugin_bin/$BINARY_NAME (for plugin hooks)"
-
     # Verify installation
     if "$INSTALL_DIR/$BINARY_NAME" --version &> /dev/null; then
         info "Successfully installed roz $version"
